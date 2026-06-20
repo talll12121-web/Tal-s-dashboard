@@ -3,12 +3,12 @@ const API = "";  // same origin
 let currentView = "intraday";
 let refreshTimer = null;
 
-const DASH = "\u2013";   // en dash
-const UP = "\u25B2";     // up triangle
-const DN = "\u25BC";     // down triangle
-const X = "\u2715";      // cross
-const GE = "\u2265";     // >=
-const MID = "\u00B7";    // middot
+const DASH = "–";
+const UP = "▲";
+const DN = "▼";
+const X = "✕";
+const GE = "≥";
+const MID = "·";
 
 const VIEWS = {
   intraday:  { title: "Intraday",  sub: "Live momentum on your day-trading watchlist", wl: "intraday" },
@@ -32,10 +32,24 @@ const fmtBig = (n) => {
 const sign = (n) => n > 0 ? "pos" : n < 0 ? "neg" : "";
 const arrow = (n) => n > 0 ? UP : n < 0 ? DN : "";
 
-async function api(path, opts) {
-  const r = await fetch(API + path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-  return r.json();
+async function api(path, opts = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), opts.timeout || 30000);
+  try {
+    const r = await fetch(API + path, { ...opts, signal: ctrl.signal });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function errorState(msg) {
+  return `<div class="card"><div class="empty"><div class="big">&#9888;</div>
+    <strong>Couldn't load data</strong>
+    <p style="margin-top:6px;max-width:420px">${msg || 'The data source did not respond.'}</p>
+    <button class="btn primary" style="margin-top:14px" onclick="render(true)">Retry</button>
+  </div></div>`;
 }
 
 function toast(msg) {
@@ -44,7 +58,6 @@ function toast(msg) {
   setTimeout(() => t.classList.remove("show"), 2600);
 }
 
-/* -- sparkline -------------------------------------------------------- */
 function sparkline(data, color) {
   if (!data || data.length < 2) return "";
   const w = 78, h = 26, p = 2;
@@ -59,7 +72,6 @@ function sparkline(data, color) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
 
-/* -- navigation ------------------------------------------------------- */
 $$(".nav-item").forEach(btn => btn.addEventListener("click", () => {
   $$(".nav-item").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
@@ -98,7 +110,6 @@ async function removeSymbol(sym) {
   render(true);
 }
 
-/* -- status poll ------------------------------------------------------ */
 async function pollStatus() {
   try {
     const s = await api("/api/status");
@@ -115,19 +126,27 @@ async function pollStatus() {
   } catch (e) {}
 }
 
-/* -- render dispatcher ------------------------------------------------ */
 function loading() { $("#content").innerHTML = `<div class="skeleton"><span class="loader"></span> Loading...</div>`; }
 
 async function render(forced) {
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
-  if (currentView === "intraday") await renderIntraday();
-  else if (currentView === "swing") await renderSwing();
-  else if (currentView === "longterm") await renderLongterm();
-  else if (currentView === "journal") await renderJournal();
+  const view = currentView;
+  try {
+    if (view === "intraday") await renderIntraday();
+    else if (view === "swing") await renderSwing();
+    else if (view === "longterm") await renderLongterm();
+    else if (view === "journal") await renderJournal();
+  } catch (e) {
+    if (currentView === view) {
+      const why = (e && e.name === "AbortError")
+        ? "The request timed out (the data source may be slow or rate-limited). Try again."
+        : (e && e.message) || "Unknown error.";
+      $("#content").innerHTML = errorState(why);
+    }
+  }
   if (currentView === "intraday") refreshTimer = setTimeout(() => render(), 15000);
 }
 
-/* -- INTRADAY --------------------------------------------------------- */
 async function renderIntraday() {
   loading();
   const [rows, newsMap] = await Promise.all([api("/api/intraday"), api("/api/news?mode=intraday").catch(() => ({}))]);
@@ -138,7 +157,6 @@ async function renderIntraday() {
       <div class="stat-card"><div class="k">Signals firing</div><div class="v pos">${live}</div><div class="sub">above VWAP &amp; SMA20</div></div>
       <div class="stat-card"><div class="k">Avg change</div><div class="v ${sign(avg(rows, 'changePct'))}">${fmt(avg(rows, 'changePct'))}%</div><div class="sub">today, watchlist</div></div>
     </div>`;
-
   const body = rows.map(r => `
     <tr>
       <td class="sym">${r.symbol}<span class="rm" onclick="removeSymbol('${r.symbol}')">${X}</span></td>
@@ -150,7 +168,6 @@ async function renderIntraday() {
       <td>${sparkline(r.sparkline)}</td>
       <td class="num"><span class="pill gray">${r.source || ''}</span></td>
     </tr>`).join("");
-
   $("#content").innerHTML = `
     ${stats}
     <div class="grid-2">
@@ -165,7 +182,6 @@ async function renderIntraday() {
     </div>`;
 }
 
-/* -- SWING ------------------------------------------------------------ */
 async function renderSwing() {
   loading();
   const rows = await api("/api/swing");
@@ -209,7 +225,6 @@ function setupPill(setup) {
   return `<span class="pill ${cls}">${setup}</span>`;
 }
 
-/* -- LONG-TERM (sector + fundamentals) -------------------------------- */
 async function renderLongterm() {
   loading();
   const [sectorData, fund] = await Promise.all([api("/api/sector"), api("/api/fundamental")]);
@@ -226,7 +241,6 @@ async function renderLongterm() {
       <div class="hsub">1W ${fmt(s.ret1w)}% ${MID} 3M ${fmt(s.ret3m)}%</div>
     </div>`;
   }).join("");
-
   const fbody = fund.map(r => `
     <tr>
       <td class="sym">${r.symbol}<span class="rm" onclick="removeSymbol('${r.symbol}')">${X}</span><div style="font-size:11px;color:var(--muted);font-weight:400">${r.name || ''}</div></td>
@@ -240,7 +254,6 @@ async function renderLongterm() {
       <td class="num">${fmtBig(r.marketCap)}</td>
       <td>${recPill(r.recommendation)}</td>
     </tr>`).join("");
-
   $("#content").innerHTML = `
     <div class="section-head"><h2>Sector heat ${MID} 1-month momentum</h2><span class="hint">SPY ${fmt(sectorData.benchmark1m)}% ${MID} green = leading</span></div>
     <div class="heat-grid" style="margin-bottom:26px">${heat || '<div class="empty">No sector data</div>'}</div>
@@ -261,7 +274,6 @@ function recPill(r) {
   return `<span class="pill amber">${r}</span>`;
 }
 
-/* -- JOURNAL ---------------------------------------------------------- */
 async function renderJournal() {
   loading();
   const j = await api("/api/journal");
@@ -274,18 +286,15 @@ async function renderJournal() {
       <div class="stat-card"><div class="k">Expectancy</div><div class="v ${sign(s.expectancy)}">$${fmt(s.expectancy)}</div><div class="sub">per trade</div></div>
       <div class="stat-card"><div class="k">Avg R:R</div><div class="v">${s.avgRR ?? DASH}</div><div class="sub">avg win / avg loss</div></div>
     </div>`;
-
   const toolbar = `
     <div class="toolbar">
       <button class="btn primary" id="sync-ibkr">&#8595; Sync IBKR trades</button>
       <label class="btn soft" style="cursor:pointer">&#8593; Import CSV<input type="file" id="csv-file" accept=".csv" hidden></label>
       <span class="hint" id="import-hint">IBKR Flex / Activity export, or any trades CSV</span>
     </div>`;
-
   const eq = j.equityCurve && j.equityCurve.length
     ? `<div class="card equity-wrap"><div class="section-head" style="margin:0 0 10px"><h2>Equity curve</h2><span class="hint">cumulative realised P&amp;L</span></div>${equityChart(j.equityCurve)}</div>`
     : "";
-
   const tbody = (j.trades || []).map(t => `
     <tr>
       <td class="sym">${t.symbol}</td>
@@ -297,24 +306,19 @@ async function renderJournal() {
       <td class="num ${sign(t.pnlPct)}">${fmt(t.pnlPct)}%</td>
       <td style="font-size:11px;color:var(--muted)">${(t.exitTime || '').slice(0, 16)}</td>
     </tr>`).join("");
-
   const bySym = (j.bySymbol || []).map(b => `
     <tr><td class="sym">${b.symbol}</td><td class="num">${b.trades}</td><td class="num">${fmt(b.winRate,0)}%</td><td class="num ${sign(b.pnl)}">$${fmt(b.pnl)}</td></tr>`).join("");
-
   const main = (j.trades && j.trades.length)
     ? `<div class="card">
          <div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Closed trades</h2><span class="hint">FIFO-matched round trips</span></div>
          <table><thead><tr><th>Symbol</th><th>Dir</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">P&amp;L</th><th class="num">%</th><th>Closed</th></tr></thead><tbody>${tbody}</tbody></table>
        </div>`
     : `<div class="card"><div class="empty"><div class="big">&#128211;</div><strong>No trades yet</strong><p style="margin-top:6px">Sync from IBKR or import a CSV to populate your journal.</p></div></div>`;
-
   const side = (j.bySymbol && j.bySymbol.length)
     ? `<div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>By symbol</h2></div>
         <table><thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Win%</th><th class="num">P&amp;L</th></tr></thead><tbody>${bySym}</tbody></table></div>`
     : "";
-
   $("#content").innerHTML = `${stats}${toolbar}${eq}<div class="grid-2">${main}${side}</div>`;
-
   $("#sync-ibkr").addEventListener("click", async () => {
     try { const r = await api("/api/journal/sync-ibkr", { method: "POST" }); toast(`Synced ${r.added} new fills`); render(true); }
     catch (e) { toast("IBKR not connected"); }
@@ -345,7 +349,6 @@ function equityChart(data) {
   </svg>`;
 }
 
-/* -- shared bits ------------------------------------------------------ */
 function newsPanel(map) {
   const items = [];
   Object.entries(map || {}).forEach(([sym, list]) => (list || []).forEach(n => items.push({ sym, ...n })));
@@ -366,8 +369,6 @@ function emptyRow(cols) {
   return `<tr><td colspan="${cols || 1}"><div class="empty"><div class="big">&#128269;</div>No data ${DASH} add a ticker to your watchlist to begin.</div></td></tr>`;
 }
 
-/* -- boot ------------------------------------------------------------- */
 pollStatus();
 setInterval(pollStatus, 10000);
 switchView("intraday");
-                              
