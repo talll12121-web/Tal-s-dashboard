@@ -104,6 +104,8 @@ def _yfinance_quote(symbol: str) -> dict:
         prev = _f(fi.get("previous_close"))
         change = round(price - prev, 2) if price and prev else None
         change_pct = round((price - prev) / prev * 100, 2) if price and prev else None
+        if price is None:
+            raise ValueError("no price from yfinance")
         return {
             "symbol": symbol,
             "price": price,
@@ -116,8 +118,12 @@ def _yfinance_quote(symbol: str) -> dict:
             "source": "yfinance",
         }
     except Exception as e:
-        logger.warning("yfinance quote failed for %s: %s", symbol, e)
-        return {"symbol": symbol, "price": None, "source": "unavailable", "error": str(e)}
+        logger.debug("yfinance quote failed for %s: %s — trying Stooq", symbol, e)
+        from . import stooq
+        q = stooq.get_quote(symbol)
+        if q:
+            return q
+        return {"symbol": symbol, "price": None, "source": "unavailable"}
 
 
 # -- History / bars -----------------------------------------------------
@@ -127,16 +133,21 @@ def get_history(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
     cached = _cache_get(key, config.HISTORY_TTL)
     if cached is not None:
         return cached
+    df = None
     try:
         yf = _yf()
         df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=False)
-        if df is None:
-            df = pd.DataFrame()
-        _cache_put(key, df)
-        return df
     except Exception as e:
-        logger.warning("history failed for %s: %s", symbol, e)
-        return pd.DataFrame()
+        logger.debug("yfinance history failed for %s: %s", symbol, e)
+        df = None
+    # Fallback to Stooq when yfinance is blocked/empty (e.g. datacenter IPs)
+    if df is None or df.empty:
+        from . import stooq
+        df = stooq.get_history(symbol, period=period, interval=interval)
+    if df is None:
+        df = pd.DataFrame()
+    _cache_put(key, df)
+    return df
 
 
 # -- Fundamentals -------------------------------------------------------
