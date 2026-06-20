@@ -6,16 +6,16 @@ For the long-term investor view. Pulls fundamentals (yfinance) for the
 long-term watchlist and builds a composite quality/value/growth score so the
 strongest businesses surface at the top.
 
-Composite = quality (margins, ROE, low debt)
-          + growth  (revenue & earnings growth)
-          + value   (reasonable PE / PEG)
-Each pillar is 0-100; the composite is their weighted average.
+When fundamentals are unavailable (e.g. yfinance blocked from a cloud IP), it
+falls back to a price-momentum score from daily history so the table still
+populates.
 """
 
 from __future__ import annotations
 import logging
 
 from ..providers import market_data as md
+from . import indicators as ta
 
 logger = logging.getLogger(__name__)
 
@@ -63,18 +63,21 @@ def analyze(symbol: str) -> dict:
         _band(f.get("trailingPE"), 10, 50, invert=True),
         _band(f.get("pegRatio"), 1.0, 3.0, invert=True),
     ])
-    composite = _avg([
-        (quality * 0.4) if quality is not None else None,
-        (growth * 0.35) if growth is not None else None,
-        (value * 0.25) if value is not None else None,
-    ])
-    # rescale composite back to 0-100 from the weighted pieces
     parts = [p for p in [quality, growth, value] if p is not None]
     composite = _avg(parts)
 
+    # Fallback when fundamentals are unavailable (e.g. yfinance blocked on cloud):
+    # rank by price momentum from daily history so the table still populates.
+    if composite is None:
+        df = md.get_history(symbol, period="8mo", interval="1d")
+        if not df.empty and len(df) > 60:
+            ret3m = ta.pct_change(df["Close"], 63)
+            ret6m = ta.pct_change(df["Close"], 126)
+            composite = _avg([_band(ret3m, -10, 30), _band(ret6m, -10, 50)])
+
     return {
         "symbol": symbol.upper(),
-        "name": f.get("name"),
+        "name": f.get("name") or symbol.upper(),
         "sector": f.get("sector"),
         "marketCap": f.get("marketCap"),
         "trailingPE": _round(f.get("trailingPE")),
