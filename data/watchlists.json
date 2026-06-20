@@ -1,0 +1,24 @@
+{
+  "intraday": [
+    "AMD",
+    "META",
+    "HOOD",
+    "NVDA",
+    "TSLA"
+  ],
+  "swing": [
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "GOOGL",
+    "NFLX"
+  ],
+  "longterm": [
+    "AAPL",
+    "MSFT",
+    "BRK-B",
+    "JNJ",
+    "V",
+    "KO"
+  ]
+}

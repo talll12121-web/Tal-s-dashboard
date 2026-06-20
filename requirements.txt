@@ -1,0 +1,18 @@
+# Trading Dashboard - dependencies (same file works local + cloud)
+flask>=3.0
+gunicorn>=21.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9      # Postgres driver (cloud). Harmless if unused locally.
+yfinance>=0.2.40
+pandas>=2.1
+numpy>=1.26
+feedparser>=6.0
+requests>=2.31
+python-dotenv>=1.0
+
+# Interactive Brokers - needed on the machine that talks to IB Gateway/TWS:
+#   * local all-in-one mode (the desktop app), or
+#   * the desktop bridge (bridge/ibkr_bridge.py).
+# NOT needed on the cloud server.
+ib_async>=1.0
+pytz>=2023.3

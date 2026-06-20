@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Dashboard</title>
+<link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">&#9650;</div>
+      <div class="brand-text">
+        <strong>Terminal</strong>
+        <span>one-stop trading</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="intraday">
+        <span class="nav-ico">&#9889;</span> Intraday
+      </button>
+      <button class="nav-item" data-view="swing">
+        <span class="nav-ico">&#128200;</span> Swing
+      </button>
+      <button class="nav-item" data-view="longterm">
+        <span class="nav-ico">&#127963;</span> Long-term
+      </button>
+      <button class="nav-item" data-view="journal">
+        <span class="nav-ico">&#128211;</span> Journal
+      </button>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="ibkr-status" class="status-pill off">
+        <span class="dot"></span><span class="label">IBKR offline&#8230;</span>
+      </div>
+      <div class="data-note">Data: IBKR live + yfinance + RSS</div>
+      <a id="logout-link" href="/logout" class="logout-link" style="display:none">Sign out</a>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="view-title">Intraday</h1>
+        <p id="view-sub" class="muted">Live momentum on your day-trading watchlist</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="watchlist-add">
+          <input id="symbol-input" type="text" placeholder="Add ticker&#8230;" maxlength="8" autocomplete="off">
+          <button id="add-btn">Add</button>
+        </div>
+        <button id="refresh-btn" class="ghost" title="Refresh">&#8635; Refresh</button>
+      </div>
+    </header>
+
+    <div id="content" class="content">
+      <!-- views injected here -->
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
