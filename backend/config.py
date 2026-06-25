@@ -36,8 +36,15 @@ IB_ENABLED = os.environ.get("IB_ENABLED", "true").lower() == "true"
 
 # -- Data sources -------------------------------------------------------
 # Primary free source is yfinance (no key). Optional keys enrich/augment.
+# Fundamentals fallback chain (used when Yahoo blocks .info on datacenter IPs):
+#   yfinance  ->  SEC EDGAR (no key, never blocks)  +  Finnhub (free key, fills
+#   the price-derived P/E, P/B and market-cap gaps EDGAR can't provide).
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
 SEC_API_KEY = os.environ.get("SEC_API_KEY", "")
+# SEC requires a descriptive User-Agent with contact info on every EDGAR request.
+# Set this to "Your Name your@email" via the env var in production.
+SEC_USER_AGENT = os.environ.get(
+    "SEC_USER_AGENT", "Tal Dashboard fundamentals (contact: talbramli@gmail.com)")
 
 # How long quote/fundamental responses are cached (seconds)
 QUOTE_TTL = 15

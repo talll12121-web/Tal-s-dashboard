@@ -20,12 +20,23 @@ to the top of the table.
 
 from __future__ import annotations
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from ..providers import market_data as md
 from . import indicators as ta
 from .. import config
 
 logger = logging.getLogger(__name__)
+
+# Whole-scan wall-clock budget (seconds), comfortably under the frontend abort.
+SCAN_DEADLINE = 22.0
+
+# Last successful per-symbol row, so a single failed poll (yfinance blocked AND
+# Stooq throttled at the same moment) reuses the prior result instead of making
+# the symbol flicker out of the table. Stale entries expire after LAST_GOOD_TTL.
+LAST_GOOD_TTL = 60 * 30
+_last_good: dict[str, tuple[float, dict]] = {}
 
 
 def _bench_return(lookback: int = 21) -> float | None:
@@ -113,15 +124,43 @@ def analyze(symbol: str, bench_ret: float | None) -> dict | None:
     }
 
 
+def _analyze_or_last_good(sym: str, bench: float | None) -> dict | None:
+    """Analyze a symbol; on failure or empty data, reuse the last good row."""
+    try:
+        r = analyze(sym, bench)
+    except Exception as e:
+        logger.warning("swing analyze %s: %s", sym, e)
+        r = None
+    if r:
+        _last_good[sym] = (time.time(), r)
+        return r
+    cached = _last_good.get(sym)
+    if cached and (time.time() - cached[0]) < LAST_GOOD_TTL:
+        row = dict(cached[1])
+        row["stale"] = True  # let the UI mark it if it wants
+        return row
+    return None
+
+
 def scan(symbols: list[str]) -> list[dict]:
-    bench = _bench_return()
     rows = []
-    for sym in symbols:
-        try:
-            r = analyze(sym, bench)
+    if not symbols:
+        return rows
+    bench = _bench_return()
+    t0 = time.time()
+    ex = ThreadPoolExecutor(max_workers=min(8, len(symbols)))
+    try:
+        futures = {ex.submit(_analyze_or_last_good, s, bench): s for s in symbols}
+        for fut, sym in futures.items():
+            remaining = SCAN_DEADLINE - (time.time() - t0)
+            try:
+                r = fut.result(timeout=max(0.1, remaining))
+            except FuturesTimeout:
+                logger.warning("swing %s exceeded scan deadline - skipped", sym)
+                continue
             if r:
                 rows.append(r)
-        except Exception as e:
-            logger.warning("swing analyze %s: %s", sym, e)
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     rows.sort(key=lambda r: r["score"], reverse=True)
     return rows

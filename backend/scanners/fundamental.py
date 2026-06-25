@@ -2,23 +2,34 @@
 Fundamental ranking - 5-framework scorecard
 ============================================
 
-For the long-term investor view. Five frameworks scored 0-100 -> composite:
+For the long-term investor view. For each symbol we score five fundamental
+frameworks 0-100 and combine them into a composite:
+
   1. Valuation     - P/E, PEG, P/B (cheaper = higher)
   2. Profitability - net margin, ROE
   3. Growth        - revenue & earnings growth
-  4. Health        - debt/equity, current ratio
+  4. Health        - debt/equity, current ratio (stronger balance sheet = higher)
   5. Momentum      - 3M & 6M price return
-Symbols scored in parallel so the watchlist returns quickly.
+
+Data is yfinance with a Stooq price fallback. Symbols are scored in parallel so
+the whole watchlist returns quickly (this is what made Long-term feel "stuck"
+before - it was doing slow sequential network calls).
 """
 
 from __future__ import annotations
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from ..providers import market_data as md
 from . import indicators as ta
 
 logger = logging.getLogger(__name__)
+
+# Whole-scan wall-clock budget (seconds). Kept comfortably under the frontend's
+# 30s abort window so the Long-term tab renders whatever finished instead of the
+# request hanging and the page blanking out.
+SCAN_DEADLINE = 22.0
 
 
 def _band(value, good, great, invert=False):
@@ -48,6 +59,10 @@ def _avg(vals):
 
 def analyze(symbol: str) -> dict:
     f = md.get_fundamentals(symbol)
+    # True when yfinance .info was blocked/unavailable (common on cloud/datacenter
+    # IPs). The scorecard then falls back to price-momentum only.
+    fundamentals_ok = not f.get("error") and f.get("marketCap") is not None
+
     valuation = _avg([
         _band(f.get("trailingPE"), 10, 50, invert=True),
         _band(f.get("pegRatio"), 1.0, 3.0, invert=True),
@@ -65,13 +80,17 @@ def analyze(symbol: str) -> dict:
         _band(f.get("debtToEquity"), 50, 200, invert=True),
         _band(f.get("currentRatio"), 1.0, 3.0),
     ])
+
+    # momentum from daily history (also the fallback when fundamentals are blocked)
     momentum = None
     df = md.get_history(symbol, period="8mo", interval="1d")
     if not df.empty and len(df) > 60:
         ret3m = ta.pct_change(df["Close"], 63)
         ret6m = ta.pct_change(df["Close"], 126)
         momentum = _avg([_band(ret3m, -10, 30), _band(ret6m, -15, 50)])
+
     composite = _avg([valuation, profitability, growth, health, momentum])
+
     return {
         "symbol": symbol.upper(),
         "name": f.get("name") or symbol.upper(),
@@ -85,13 +104,46 @@ def analyze(symbol: str) -> dict:
         "debtToEquity": _round(f.get("debtToEquity")),
         "dividendYield": _pct(f.get("dividendYield")),
         "recommendation": f.get("recommendationKey"),
+        # the five frameworks
         "valuation": valuation,
         "profitability": profitability,
         "growth": growth,
         "health": health,
         "momentum": momentum,
         "compositeScore": composite,
+        # Lets the UI flag rows where the fundamental provider was unavailable
+        # and only the momentum framework could be computed.
+        "partial": not fundamentals_ok,
     }
+
+
+def scan(symbols: list[str]) -> list[dict]:
+    rows = []
+    if not symbols:
+        return rows
+    t0 = time.time()
+    ex = ThreadPoolExecutor(max_workers=min(8, len(symbols)))
+    try:
+        futures = {ex.submit(_safe_analyze, s): s for s in symbols}
+        for fut, sym in futures.items():
+            remaining = SCAN_DEADLINE - (time.time() - t0)
+            try:
+                r = fut.result(timeout=max(0.1, remaining))
+            except FuturesTimeout:
+                logger.warning("fundamental %s exceeded scan deadline - skipped", sym)
+                continue
+            except Exception as e:  # belt-and-braces; _safe_analyze already guards
+                logger.warning("fundamental %s: %s", sym, e)
+                continue
+            # Keep a row only if it carries *some* usable signal, so a fully
+            # blocked symbol (no price, no momentum) doesn't render as all-dashes.
+            if r and (r.get("price") is not None or r.get("compositeScore") is not None):
+                rows.append(r)
+    finally:
+        # Don't block the request waiting on hung network calls; abandon stragglers.
+        ex.shutdown(wait=False, cancel_futures=True)
+    rows.sort(key=lambda r: (r.get("compositeScore") if r.get("compositeScore") is not None else -1), reverse=True)
+    return rows
 
 
 def _safe_analyze(sym):
@@ -100,18 +152,6 @@ def _safe_analyze(sym):
     except Exception as e:
         logger.warning("fundamental analyze %s: %s", sym, e)
         return None
-
-
-def scan(symbols: list[str]) -> list[dict]:
-    rows = []
-    if not symbols:
-        return rows
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for r in ex.map(_safe_analyze, symbols):
-            if r:
-                rows.append(r)
-    rows.sort(key=lambda r: (r.get("compositeScore") if r.get("compositeScore") is not None else -1), reverse=True)
-    return rows
 
 
 def _round(x, d=2):

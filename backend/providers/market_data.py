@@ -152,42 +152,99 @@ def get_history(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
 
 # -- Fundamentals -------------------------------------------------------
 def get_fundamentals(symbol: str) -> dict:
-    """Key fundamental metrics for the long-term view. yfinance-backed."""
+    """Key fundamental metrics for the long-term view. yfinance-backed.
+
+    Yahoo frequently blocks the .info endpoint from datacenter IPs, so this:
+      * retries briefly on transient failures,
+      * NEVER caches a failure for the full (6h) fundamental TTL - a blocked
+        request is cached only briefly so the next poll can recover instead of
+        the Long-term tab staying empty for hours.
+    """
     key = f"fund:{symbol}"
     cached = _cache_get(key, config.FUNDAMENTAL_TTL)
-    if cached:
+    # Only trust the long-lived cache when it actually holds data.
+    if cached and not cached.get("error"):
         return cached
+    # Short cache for recent failures avoids hammering a rate-limited source.
+    failed = _cache_get(f"fundfail:{symbol}", 90)
+    if failed:
+        return failed
+
     out = {"symbol": symbol}
-    try:
-        yf = _yf()
-        info = yf.Ticker(symbol).info or {}
-        out.update({
-            "name": info.get("shortName") or info.get("longName"),
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-            "marketCap": info.get("marketCap"),
-            "trailingPE": info.get("trailingPE"),
-            "forwardPE": info.get("forwardPE"),
-            "pegRatio": info.get("pegRatio"),
-            "priceToBook": info.get("priceToBook"),
-            "profitMargins": info.get("profitMargins"),
-            "returnOnEquity": info.get("returnOnEquity"),
-            "revenueGrowth": info.get("revenueGrowth"),
-            "earningsGrowth": info.get("earningsGrowth"),
-            "debtToEquity": info.get("debtToEquity"),
-            "dividendYield": info.get("dividendYield"),
-            "freeCashflow": info.get("freeCashflow"),
-            "beta": info.get("beta"),
-            "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
-            "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
-            "recommendationKey": info.get("recommendationKey"),
-            "targetMeanPrice": info.get("targetMeanPrice"),
-        })
-    except Exception as e:
-        logger.warning("fundamentals failed for %s: %s", symbol, e)
-        out["error"] = str(e)
-    _cache_put(key, out)
+    last_err = None
+    for attempt in range(2):
+        try:
+            yf = _yf()
+            info = yf.Ticker(symbol).info or {}
+            if not info.get("marketCap") and not info.get("shortName"):
+                raise ValueError("empty .info payload (likely rate-limited)")
+            out.update({
+                "name": info.get("shortName") or info.get("longName"),
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "marketCap": info.get("marketCap"),
+                "trailingPE": info.get("trailingPE"),
+                "forwardPE": info.get("forwardPE"),
+                "pegRatio": info.get("pegRatio"),
+                "priceToBook": info.get("priceToBook"),
+                "profitMargins": info.get("profitMargins"),
+                "returnOnEquity": info.get("returnOnEquity"),
+                "revenueGrowth": info.get("revenueGrowth"),
+                "earningsGrowth": info.get("earningsGrowth"),
+                "debtToEquity": info.get("debtToEquity"),
+                "dividendYield": info.get("dividendYield"),
+                "freeCashflow": info.get("freeCashflow"),
+                "beta": info.get("beta"),
+                "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
+                "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
+                "recommendationKey": info.get("recommendationKey"),
+                "targetMeanPrice": info.get("targetMeanPrice"),
+            })
+            _cache_put(key, out)
+            return out
+        except Exception as e:
+            last_err = e
+            logger.debug("fundamentals attempt %d failed for %s: %s", attempt, symbol, e)
+
+    # yfinance blocked (typical on Render). Fall back to sources that don't get
+    # blocked from datacenter IPs: SEC EDGAR (no key, never blocks, official
+    # filings) as the primary, with Finnhub filling the price-derived gaps
+    # (P/E, P/B, market cap, sector) that EDGAR can't provide.
+    merged = _fallback_fundamentals(symbol)
+    if merged:
+        _cache_put(key, merged)
+        return merged
+
+    logger.warning("fundamentals unavailable for %s: %s", symbol, last_err)
+    out["error"] = str(last_err)
+    _cache_put(f"fundfail:{symbol}", out)  # short TTL, not the 6h fundamental cache
     return out
+
+
+def _fallback_fundamentals(symbol: str) -> Optional[dict]:
+    """EDGAR (primary, never blocks) + Finnhub (gap-fill). Returns a merged
+    fundamentals dict, or None if neither source produced anything usable."""
+    from . import edgar, finnhub
+    try:
+        edgar_data = edgar.get_fundamentals(symbol)
+    except Exception as e:
+        logger.debug("edgar fallback %s: %s", symbol, e)
+        edgar_data = {}
+    try:
+        finnhub_data = finnhub.get_fundamentals(symbol)
+    except Exception as e:
+        logger.debug("finnhub fallback %s: %s", symbol, e)
+        finnhub_data = {}
+    if not edgar_data and not finnhub_data:
+        return None
+    # Start from Finnhub (has the price-derived fields), then let EDGAR's
+    # filing-based values take precedence where present (user's "EDGAR primary").
+    merged = {"symbol": symbol.upper()}
+    merged.update({k: v for k, v in finnhub_data.items() if v is not None})
+    merged.update({k: v for k, v in edgar_data.items() if v is not None})
+    srcs = [s for s in (edgar_data.get("source"), finnhub_data.get("source")) if s]
+    merged["source"] = "+".join(srcs) if srcs else "fallback"
+    return merged
 
 
 # -- helpers ------------------------------------------------------------
