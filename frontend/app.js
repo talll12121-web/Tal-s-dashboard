@@ -8,8 +8,10 @@ const DASH = "–", UP = "▲", DN = "▼", X = "✕", GE = "≥", MID = "·";
 const VIEWS = {
   intraday:  { title: "Intraday",  sub: "Live momentum on your day-trading watchlist", wl: "intraday" },
   swing:     { title: "Swing",     sub: "Multi-day setups scored by trend, pullback & breakout", wl: "swing" },
-  longterm:  { title: "Long-term", sub: "Sector rotation + 5-framework fundamental ranking", wl: "longterm" },
+  longterm:  { title: "Long-term", sub: "5-framework fundamental ranking", wl: "longterm" },
+  sector:    { title: "Sector",    sub: "Sector rotation heat — where money is flowing", wl: null },
   journal:   { title: "Journal",   sub: "Your IBKR trades, performance & review", wl: null },
+  settings:  { title: "Settings",  sub: "Appearance, connections & preferences", wl: null },
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -128,7 +130,9 @@ async function render(background) {
     if (view === "intraday") await renderIntraday();
     else if (view === "swing") await renderSwing();
     else if (view === "longterm") await renderLongterm();
+    else if (view === "sector") await renderSector();
     else if (view === "journal") await renderJournal();
+    else if (view === "settings") renderSettings();
     success = true;
   } catch (e) {
     if (currentView === view && !background) {
@@ -199,23 +203,16 @@ function fwBar(v) {
 }
 
 async function renderLongterm() {
-  // Decoupled so a slow/blocked fundamentals provider can't take down the whole
-  // tab (or the sector heatmap) — each half degrades on its own.
-  const [sectorData, fund] = await Promise.all([
-    api("/api/sector").catch(() => ({ sectors: [], _failed: true })),
-    api("/api/fundamental").catch(() => ({ _failed: true })),
-  ]);
+  const fund = await api("/api/fundamental").catch(() => ({ _failed: true }));
   const fundFailed = fund && fund._failed;
   const fundRows = Array.isArray(fund) ? fund : [];
   const partialCount = fundRows.filter(r => r.partial).length;
-  const sectors = sectorData.sectors || [];
-  const heat = sectors.map(s => {
-    const v = s.ret1m ?? 0; const t = Math.max(-8, Math.min(8, v)) / 8;
-    const bg = v >= 0 ? `linear-gradient(135deg, hsl(155 70% ${30 - t * 8}%), hsl(155 65% ${36 - t * 8}%))`
-                      : `linear-gradient(135deg, hsl(353 70% ${40 + t * 8}%), hsl(353 65% ${34 + t * 8}%))`;
-    return `<div class="heat-cell" style="background:${bg}"><div class="hs">${s.sector}</div><div class="he">${s.etf} ${MID} #${s.rank}</div>
-      <div class="hv">${v >= 0 ? '+' : ''}${fmt(v)}%</div><div class="hsub">1W ${fmt(s.ret1w)}% ${MID} 3M ${fmt(s.ret3m)}%</div></div>`;
-  }).join("");
+  const avgComposite = avg(fundRows, 'compositeScore');
+  const topPick = fundRows[0];
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Ranked</div><div class="v">${fundRows.length}</div><div class="sub">symbols scored</div></div>
+      <div class="stat-card"><div class="k">Avg composite</div><div class="v">${fmt(avgComposite, 0)}</div><div class="sub">0–100 quality</div></div>
+      <div class="stat-card"><div class="k">Top pick</div><div class="v">${topPick?.symbol || DASH}</div><div class="sub">${topPick ? fmt(topPick.compositeScore, 0) + ' composite' : ''}</div></div></div>`;
   const fbody = fundRows.map(r => `<tr${r.partial ? ' class="row-partial"' : ''}>
       <td class="sym">${r.symbol}<div style="font-size:11px;color:var(--muted);font-weight:400">${r.name || ''}</div></td>
       <td class="num">${fmt(r.price)}</td>
@@ -230,12 +227,97 @@ async function renderLongterm() {
   let fundNote = '5 frameworks: valuation ' + MID + ' profitability ' + MID + ' growth ' + MID + ' health ' + MID + ' momentum';
   if (fundFailed) fundNote = '&#9888; Fundamentals provider unavailable (rate-limited). Retry shortly.';
   else if (partialCount) fundNote = `&#9888; ${partialCount} of ${fundRows.length} showing momentum only — fundamentals provider rate-limited`;
-  $("#content").innerHTML = `
-    <div class="section-head"><h2>Sector heat ${MID} 1-month momentum</h2><span class="hint">SPY ${fmt(sectorData.benchmark1m)}% ${MID} green = leading</span></div>
-    <div class="heat-grid" style="margin-bottom:26px">${heat || '<div class="empty">No sector data</div>'}</div>
+  $("#content").innerHTML = `${stats}
     <div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Fundamental ranking</h2><span class="hint">${fundNote}</span></div>
       <table><thead><tr><th>Symbol</th><th class="num">Price</th><th>Composite</th><th class="num">Value</th><th class="num">Profit</th><th class="num">Growth</th><th class="num">Health</th><th class="num">Mom</th><th class="num">Mkt Cap</th></tr></thead>
       <tbody>${fbody || emptyRow(9)}</tbody></table></div>`;
+}
+
+async function renderSector() {
+  const sectorData = await api("/api/sector").catch(() => ({ sectors: [], _failed: true }));
+  const sectors = sectorData.sectors || [];
+  const sorted = [...sectors].sort((a, b) => (b.ret1m ?? -99) - (a.ret1m ?? -99));
+  const leader = sorted[0], laggard = sorted[sorted.length - 1];
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Benchmark (SPY)</div><div class="v ${sign(sectorData.benchmark1m)}">${fmt(sectorData.benchmark1m)}%</div><div class="sub">1-month</div></div>
+      <div class="stat-card"><div class="k">Leading sector</div><div class="v pos">${leader?.etf || DASH}</div><div class="sub">${leader ? leader.sector : ''}</div></div>
+      <div class="stat-card"><div class="k">Lagging sector</div><div class="v neg">${laggard?.etf || DASH}</div><div class="sub">${laggard ? laggard.sector : ''}</div></div></div>`;
+  const heat = sectors.map(s => {
+    const v = s.ret1m ?? 0; const t = Math.max(-8, Math.min(8, v)) / 8;
+    const bg = v >= 0 ? `linear-gradient(135deg, hsl(155 70% ${30 - t * 8}%), hsl(155 65% ${36 - t * 8}%))`
+                      : `linear-gradient(135deg, hsl(353 70% ${40 + t * 8}%), hsl(353 65% ${34 + t * 8}%))`;
+    return `<div class="heat-cell" style="background:${bg}"><div class="hs">${s.sector}</div><div class="he">${s.etf} ${MID} #${s.rank}</div>
+      <div class="hv">${v >= 0 ? '+' : ''}${fmt(v)}%</div><div class="hsub">1W ${fmt(s.ret1w)}% ${MID} 3M ${fmt(s.ret3m)}%</div></div>`;
+  }).join("");
+  $("#content").innerHTML = `${stats}
+    <div class="section-head"><h2>Sector heat ${MID} 1-month momentum</h2><span class="hint">green = leading SPY ${MID} red = lagging</span></div>
+    <div class="heat-grid">${heat || (sectorData._failed ? errorState('Sector data source did not respond.') : '<div class="empty">No sector data</div>')}</div>`;
+}
+
+/* -- settings --------------------------------------------------------- */
+const ACCENTS = [
+  { name: "Blue", v: "#4f7cff" }, { name: "Violet", v: "#7b6bff" },
+  { name: "Green", v: "#1fd286" }, { name: "Amber", v: "#f5b13d" },
+  { name: "Red", v: "#ff5468" }, { name: "Cyan", v: "#22b8cf" },
+];
+const FONT_SIZES = [{ name: "Compact", v: "sm" }, { name: "Default", v: "md" }, { name: "Large", v: "lg" }];
+
+function getPref(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
+function setPref(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+function applyAccent(color) {
+  document.documentElement.style.setProperty("--brand", color);
+  document.documentElement.style.setProperty("--brand-soft", color + "22");
+  setPref("accent", color);
+}
+function applyFontSize(size) {
+  document.documentElement.dataset.fs = size;
+  setPref("fontSize", size);
+}
+function initAppearance() {
+  applyAccent(getPref("accent", "#4f7cff"));
+  applyFontSize(getPref("fontSize", "md"));
+}
+
+function renderSettings() {
+  const theme = document.documentElement.dataset.theme || "dark";
+  const accent = getPref("accent", "#4f7cff");
+  const fs = getPref("fontSize", "md");
+  const seg = (opts, cur, fn, key) => opts.map(o =>
+    `<button class="seg ${(o.v === cur || o.v === key) ? 'on' : ''}" data-${fn}="${o.v}">${o.name}</button>`).join("");
+  $("#content").innerHTML = `
+    <div class="settings-wrap">
+      <div class="card setting-card">
+        <div class="card-pad">
+          <h2 class="set-h">Appearance</h2>
+          <div class="setting-row"><div><div class="set-label">Theme</div><div class="set-desc">Dark or light interface</div></div>
+            <div class="seg-group" id="seg-theme">${seg([{name:'Dark',v:'dark'},{name:'Light',v:'light'}], theme, 'theme')}</div></div>
+          <div class="setting-row"><div><div class="set-label">Font size</div><div class="set-desc">Text density across tables and cards</div></div>
+            <div class="seg-group" id="seg-fs">${seg(FONT_SIZES, fs, 'fs')}</div></div>
+          <div class="setting-row"><div><div class="set-label">Accent color</div><div class="set-desc">Highlights, buttons and charts</div></div>
+            <div class="swatches" id="swatches">${ACCENTS.map(a => `<button class="swatch ${a.v === accent ? 'on' : ''}" style="background:${a.v}" data-accent="${a.v}" title="${a.name}"></button>`).join("")}</div></div>
+        </div>
+      </div>
+      <div class="card setting-card">
+        <div class="card-pad">
+          <h2 class="set-h">Connections</h2>
+          <div class="setting-row"><div><div class="set-label">Interactive Brokers</div><div class="set-desc" id="ibkr-set-desc">Checking…</div></div>
+            <span id="ibkr-set-pill" class="pill gray">…</span></div>
+          <div class="set-desc" style="margin-top:6px">In the cloud, live IBKR data is pushed up by the desktop bridge. Run the bridge on your trading PC to stream quotes, indicators and positions here.</div>
+        </div>
+      </div>
+    </div>`;
+  // wire controls
+  $("#seg-theme").addEventListener("click", e => { const v = e.target.dataset.theme; if (v) { applyTheme(v); renderSettings(); } });
+  $("#seg-fs").addEventListener("click", e => { const v = e.target.dataset.fs; if (v) { applyFontSize(v); renderSettings(); } });
+  $("#swatches").addEventListener("click", e => { const v = e.target.dataset.accent; if (v) { applyAccent(v); renderSettings(); } });
+  // IBKR status
+  api("/api/status").then(s => {
+    const pill = $("#ibkr-set-pill"), desc = $("#ibkr-set-desc");
+    if (!pill) return;
+    if (s.ibkrConnected) { pill.className = "pill green"; pill.textContent = "Connected"; desc.textContent = `Live on port ${s.ibkrPort}`; }
+    else { pill.className = "pill gray"; pill.textContent = "Offline"; desc.textContent = "No live IBKR feed — bridge not connected"; }
+  }).catch(() => {});
 }
 
 async function renderJournal() {
@@ -297,6 +379,7 @@ function emptyRow(cols) { return `<tr><td colspan="${cols || 1}"><div class="emp
 
 /* -- boot ------------------------------------------------------------- */
 initTheme();
+initAppearance();
 pollStatus();
 setInterval(pollStatus, 10000);
 switchView("intraday");
