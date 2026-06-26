@@ -222,37 +222,35 @@ def get_fundamentals(symbol: str) -> dict:
 
 
 def _fallback_fundamentals(symbol: str) -> Optional[dict]:
-    """EDGAR (primary, never blocks) + Finnhub (gap-fill). Returns a merged
-    fundamentals dict, or None if neither source produced anything usable."""
-    from . import edgar, finnhub
-    try:
-        edgar_data = edgar.get_fundamentals(symbol)
-    except Exception as e:
-        logger.debug("edgar fallback %s: %s", symbol, e)
-        edgar_data = {}
-    try:
-        finnhub_data = finnhub.get_fundamentals(symbol)
-    except Exception as e:
-        logger.debug("finnhub fallback %s: %s", symbol, e)
-        finnhub_data = {}
-    if not edgar_data and not finnhub_data:
+    """Datacenter-friendly fundamentals when yfinance is blocked. Merges three
+    free sources by precedence FMP > SEC EDGAR > Finnhub:
+      * FMP    - preferred: complete scorecard incl. P/E, P/B, market cap, sector.
+      * EDGAR  - the never-blocks floor: filing-based ratios, guaranteed on Render.
+      * Finnhub- extra gap-fill when the others are missing fields.
+    Returns the merged dict, or None if no source produced anything usable."""
+    from . import edgar, finnhub, fmp
+
+    def _safe(mod):
+        try:
+            return mod.get_fundamentals(symbol) or {}
+        except Exception as e:
+            logger.debug("%s fallback %s: %s", mod.__name__, symbol, e)
+            return {}
+
+    fmp_data = _safe(fmp)
+    edgar_data = _safe(edgar)
+    finnhub_data = _safe(finnhub)
+    if not fmp_data and not edgar_data and not finnhub_data:
         return None
-    # Start from Finnhub (has the price-derived fields), then let EDGAR's
-    # filing-based values take precedence where present (user's "EDGAR primary").
+
+    # Fill low-priority first so higher-priority sources overwrite: the final
+    # precedence per field is FMP > EDGAR > Finnhub.
     merged = {"symbol": symbol.upper()}
-    merged.update({k: v for k, v in finnhub_data.items() if v is not None})
-    merged.update({k: v for k, v in edgar_data.items() if v is not None})
-    srcs = [s for s in (edgar_data.get("source"), finnhub_data.get("source")) if s]
+    for src in (finnhub_data, edgar_data, fmp_data):
+        merged.update({k: v for k, v in src.items() if v is not None and k != "source"})
+    srcs = [d.get("source") for d in (fmp_data, edgar_data, finnhub_data) if d.get("source")]
     merged["source"] = "+".join(srcs) if srcs else "fallback"
     return merged
 
 
-# -- helpers ------------------------------------------------------------
-def _f(x, digits: int = 2) -> Optional[float]:
-    try:
-        v = float(x)
-        if v != v:  # NaN
-            return None
-        return round(v, digits) if digits > 0 else int(v)
-    except (TypeError, ValueError):
-        return None
+# -- helpers -----------------------------------------------
