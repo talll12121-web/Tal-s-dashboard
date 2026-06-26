@@ -155,6 +155,13 @@ def api_fundamental():
     return jsonify(fundamental.scan(store.get_watchlist("longterm")))
 
 
+@app.route("/api/candles/<symbol>")
+@auth.require_login
+def api_candles(symbol):
+    tf = request.args.get("tf", "D")
+    return jsonify(market_data.get_candles(symbol, tf))
+
+
 # -- news ---------------------------------------------------------------
 @app.route("/api/news")
 @auth.require_login

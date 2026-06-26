@@ -150,6 +150,42 @@ def get_history(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
     return df
 
 
+# -- Candles (for charting) ---------------------------------------------
+def get_candles(symbol: str, timeframe: str = "D") -> dict:
+    """OHLCV candles for the charting UI. timeframe D/W/M - daily bars
+    (yfinance -> Stooq fallback) resampled to weekly/monthly server-side."""
+    tf = (timeframe or "D").upper()
+    period = {"D": "1y", "W": "2y", "M": "5y"}.get(tf, "1y")
+    df = get_history(symbol, period=period, interval="1d")
+    if df is None or df.empty:
+        return {"symbol": symbol.upper(), "timeframe": tf, "candles": []}
+    if tf in ("W", "M"):
+        agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+        rules = ["W-FRI"] if tf == "W" else ["ME", "M"]
+        for rule in rules:
+            try:
+                df = df.resample(rule).agg(agg).dropna(subset=["Open", "High", "Low", "Close"])
+                break
+            except (ValueError, KeyError) as e:
+                logger.debug("resample %s %s/%s: %s", symbol, tf, rule, e)
+    candles = []
+    for idx, row in df.iterrows():
+        o, h, l, c = row.get("Open"), row.get("High"), row.get("Low"), row.get("Close")
+        if c is None or c != c:
+            continue
+        try:
+            vol = row.get("Volume")
+            candles.append({
+                "time": idx.strftime("%Y-%m-%d"),
+                "open": round(float(o), 2), "high": round(float(h), 2),
+                "low": round(float(l), 2), "close": round(float(c), 2),
+                "volume": int(vol) if (vol is not None and vol == vol) else 0,
+            })
+        except (TypeError, ValueError):
+            continue
+    return {"symbol": symbol.upper(), "timeframe": tf, "candles": candles}
+
+
 # -- Fundamentals -------------------------------------------------------
 def get_fundamentals(symbol: str) -> dict:
     """Key fundamental metrics for the long-term view. yfinance-backed.

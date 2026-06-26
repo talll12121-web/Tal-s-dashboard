@@ -26,7 +26,7 @@ _QUOTE_URL = "https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcv&h&e=csv"
 
 _PERIOD_DAYS = {
     "5d": 7, "1mo": 31, "2mo": 62, "3mo": 93, "6mo": 186,
-    "8mo": 248, "1y": 366, "2y": 732,
+    "8mo": 248, "1y": 366, "2y": 732, "3y": 1098, "5y": 1830,
 }
 
 
