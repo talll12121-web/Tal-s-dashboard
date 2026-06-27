@@ -19,9 +19,11 @@ Run in cloud: gunicorn backend.wsgi:app   (see Procfile)
 
 from __future__ import annotations
 import logging
+import math
 import datetime as _dt
 
 from flask import Flask, jsonify, request, send_from_directory, session, redirect
+from flask.json.provider import DefaultJSONProvider
 
 from . import config
 from .core import db, store, auth
@@ -34,7 +36,25 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("dashboard")
 
+def _json_safe(o):
+    """Recursively turn NaN / Infinity into null - those are invalid JSON and
+    break the browser's JSON.parse (e.g. an indicator like sma20 = NaN)."""
+    if isinstance(o, float):
+        return None if (o != o or o == math.inf or o == -math.inf) else o
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
+
+
+class _CleanJSONProvider(DefaultJSONProvider):
+    def dumps(self, obj, **kwargs):
+        return super().dumps(_json_safe(obj), **kwargs)
+
+
 app = Flask(__name__, static_folder=None)
+app.json = _CleanJSONProvider(app)
 app.secret_key = auth.SECRET_KEY
 
 # -- init persistence ---------------------------------------------------
