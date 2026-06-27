@@ -418,7 +418,7 @@ function renderAnalyzer() {
 function analyzerCard(d) {
   if (d.error) return `<div class="empty"><div class="big">&#9888;</div>${d.error} for ${d.symbol}.</div>`;
   const header = `<div class="az-head">
-      <div><span class="az-sym sym" data-chart="${d.symbol}">${d.symbol}</span> <span class="muted">$${fmt(d.price)}</span></div>
+      <div><span class="az-sym sym" data-chart="${d.symbol}">${d.symbol}</span> <span class="muted">$${fmt(d.price)}</span>${d.changePct != null ? ` <span class="${sign(d.changePct)}" style="font-weight:600">${d.changePct >= 0 ? '+' : ''}${fmt(d.changePct)}%</span>` : ''} <span class="pill gray" style="font-size:9.5px" title="${d.priceLive ? 'Near-real-time quote' : 'End-of-day close'}">${d.priceLive ? 'LIVE' : 'EOD'}</span></div>
       <div class="az-verdict">
         <span class="pill ${d.verdictColor}">${d.verdict}</span>
         <div class="az-comp"><div class="score-bar" style="width:120px"><i style="width:${d.composite || 0}%"></i></div><span class="score-val">${d.composite ?? DASH}</span></div>

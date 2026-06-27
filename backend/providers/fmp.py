@@ -62,36 +62,44 @@ def _get(path: str, key: str, **params):
         return {}
 
 
-def get_fundamentals(symbol: str) -> dict:
-    """Standard fundamentals dict from FMP, or {} if unavailable/no key."""
+def get_quote(symbol: str) -> dict | None:
+    """Near-real-time quote from FMP for the Analyzer headline price + charts.
+    Tries the /stable then legacy /v3 endpoint; returns None if no key/unavailable
+    so callers fall back to the end-of-day close."""
     key = config.FMP_API_KEY
     if not key:
-        return {}
+        return None
     sym = symbol.upper().strip()
-    profile = _get(f"profile/{sym}", key)
-    ratios = _get(f"ratios-ttm/{sym}", key)
-    growth = _get(f"financial-growth/{sym}", key, period="annual", limit=1)
-    if not profile and not ratios:
-        return {}
+    endpoints = [
+        ("https://financialmodelingprep.com/stable/quote", {"symbol": sym}),
+        (f"{_BASE}/quote/{sym}", {}),
+    ]
+    for url, params in endpoints:
+        try:
+            p = dict(params); p["apikey"] = key
+            r = requests.get(url, params=p, timeout=8)
+            if not r.ok:
+                continue
+            data = r.json()
+            row = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+            price = _f(row.get("price")) if row else None
+            if price is None:
+                continue
+            pct = row.get("changePercentage")
+            if pct is None:
+                pct = row.get("changesPercentage")
+            return {
+                "price": price,
+                "change": _f(row.get("change")),
+                "changePct": _f(pct),
+                "prevClose": _f(row.get("previousClose")),
+                "source": "fmp",
+            }
+        except Exception as e:
+            logger.debug("fmp quote %s: %s", sym, e)
+    return None
 
-    dte = _first(ratios, "debtEquityRatioTTM", "debtToEquityTTM")
-    out = {
-        "symbol": sym,
-        "name": profile.get("companyName"),
-        "sector": profile.get("sector"),
-        "industry": profile.get("industry"),
-        "marketCap": _f(profile.get("mktCap")) or _f(profile.get("marketCap")),
-        "beta": _f(profile.get("beta")),
-        "trailingPE": _first(ratios, "peRatioTTM", "priceEarningsRatioTTM"),
-        "pegRatio": _first(ratios, "priceEarningsToGrowthRatioTTM", "pegRatioTTM"),
-        "priceToBook": _first(ratios, "priceToBookRatioTTM", "pbRatioTTM"),
-        "profitMargins": _first(ratios, "netProfitMarginTTM"),
-        "returnOnEquity": _first(ratios, "returnOnEquityTTM"),
-        "revenueGrowth": _f(growth.get("revenueGrowth")),
-        "earningsGrowth": _first(growth, "epsgrowth", "epsGrowth", "netIncomeGrowth"),
-        "debtToEquity": round(dte * 100, 2) if dte is not None else None,
-        "currentRatio": _first(ratios, "currentRatioTTM"),
-        "dividendYield": _first(ratios, "dividendYielTTM", "dividendYieldTTM"),
-        "source": "fmp",
-    }
-    return out
+
+def get_fundamentals(symbol: str) -> dict:
+    """Standard fundamentals dict from FMP, or {} if unavailable/no key."""
+    key = con

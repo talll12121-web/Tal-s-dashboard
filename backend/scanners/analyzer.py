@@ -218,9 +218,15 @@ def analyze(ticker: str) -> dict:
     else:
         verdict, vcolor = "Avoid", RED
 
+    eod = round(float(close.iloc[-1]), 2)
+    lq = md.get_live_quote(sym)
+    live = bool(lq and lq.get("price") is not None)
     return {
         "symbol": sym,
-        "price": round(float(close.iloc[-1]), 2),
+        "price": lq["price"] if live else eod,
+        "priceLive": live,
+        "changePct": lq.get("changePct") if lq else None,
+        "eodClose": eod,
         "composite": composite,
         "greenFloors": green_floors,
         "availFloors": len(avail),

@@ -155,6 +155,25 @@ def get_history(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
     return df
 
 
+# -- Live quote (FMP, for on-demand Analyzer/chart freshness) -----------
+def get_live_quote(symbol: str) -> dict | None:
+    """Near-real-time quote via FMP (cached 60s). Low-volume, on-demand only
+    (Analyzer headline + charts) so it stays within the FMP free limit. None when
+    no FMP key / unavailable -> callers fall back to the end-of-day close."""
+    key = f"livequote:{symbol.upper()}"
+    cached = _cache_get(key, 60)
+    if cached is not None:
+        return cached or None
+    q = None
+    try:
+        from . import fmp
+        q = fmp.get_quote(symbol)
+    except Exception as e:
+        logger.debug("live quote %s: %s", symbol, e)
+    _cache_put(key, q or {})
+    return q
+
+
 # -- Candles (for charting) ---------------------------------------------
 def get_candles(symbol: str, timeframe: str = "D") -> dict:
     """OHLCV candles for the charting UI. timeframe D/W/M - daily bars
@@ -188,7 +207,13 @@ def get_candles(symbol: str, timeframe: str = "D") -> dict:
             })
         except (TypeError, ValueError):
             continue
-    return {"symbol": symbol.upper(), "timeframe": tf, "candles": candles}
+    out = {"symbol": symbol.upper(), "timeframe": tf, "candles": candles}
+    lq = get_live_quote(symbol)
+    if lq and lq.get("price") is not None:
+        out["livePrice"] = lq["price"]
+        out["change"] = lq.get("change")
+        out["changePct"] = lq.get("changePct")
+    return out
 
 
 # -- Fundamentals -------------------------------------------------------

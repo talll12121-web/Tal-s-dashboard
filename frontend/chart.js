@@ -15,7 +15,7 @@
     { id: "ema20", label: "EMA 20", type: "ema", p: 20, color: "#7b6bff", on: false },
   ];
 
-  const state = { symbol: null, tf: "D", candles: [], ind: {}, charts: [] };
+  const state = { symbol: null, tf: "D", candles: [], ind: {}, charts: [], live: null, changePct: null };
   MAS.forEach(m => (state.ind[m.id] = m.on));
 
   /* ── indicator math ───────────────────────────────────────────── */
@@ -152,6 +152,7 @@
     const pc = LC.createChart(priceEl, Object.assign({ width: W, height: priceEl.clientHeight || 330 }, base));
     const cs = pc.addCandlestickSeries({ upColor: C.green, downColor: C.red, borderUpColor: C.green, borderDownColor: C.red, wickUpColor: C.green, wickDownColor: C.red });
     cs.setData(candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+    if (state.live != null) cs.createPriceLine({ price: state.live, color: C.brand, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "now" });
     const vol = pc.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     vol.setData(candles.map((c, i) => ({ time: c.time, value: c.volume, color: (i && closes[i] >= closes[i - 1]) ? C.green + "55" : C.red + "55" })));
@@ -199,7 +200,14 @@
       const r = await fetch("/api/candles/" + encodeURIComponent(state.symbol) + "?tf=" + state.tf);
       const d = await r.json();
       state.candles = d.candles || [];
-      if (meta) meta.textContent = state.candles.length ? (state.candles.length + " bars") : "";
+      state.live = (typeof d.livePrice === "number") ? d.livePrice : null;
+      state.changePct = (typeof d.changePct === "number") ? d.changePct : null;
+      if (meta) {
+        const priceTxt = state.live != null
+          ? `<b>$${state.live.toFixed(2)}</b>` + (state.changePct != null ? ` <span style="color:${state.changePct >= 0 ? 'var(--green)' : 'var(--red)'}">${state.changePct >= 0 ? '+' : ''}${state.changePct.toFixed(2)}%</span>` : "") + " · "
+          : "";
+        meta.innerHTML = priceTxt + (state.candles.length ? state.candles.length + " bars" : "");
+      }
       render();
     } catch (e) {
       document.getElementById("ch-price").innerHTML = '<div class="ch-empty">Couldn\'t load chart data.</div>';
