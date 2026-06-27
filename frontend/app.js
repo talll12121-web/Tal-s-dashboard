@@ -10,6 +10,7 @@ const VIEWS = {
   swing:     { title: "Swing",     sub: "Multi-day setups scored by trend, pullback & breakout", wl: "swing" },
   longterm:  { title: "Long-term", sub: "5-framework fundamental ranking", wl: "longterm" },
   sector:    { title: "Sector",    sub: "Sector rotation heat — where money is flowing", wl: null },
+  ideas:     { title: "Ideas",     sub: "Top trade ideas in the hottest sectors, by role", wl: null },
   journal:   { title: "Journal",   sub: "Your IBKR trades, performance & review", wl: null },
   settings:  { title: "Settings",  sub: "Appearance, connections & preferences", wl: null },
 };
@@ -131,6 +132,7 @@ async function render(background) {
     else if (view === "swing") await renderSwing();
     else if (view === "longterm") await renderLongterm();
     else if (view === "sector") await renderSector();
+    else if (view === "ideas") await renderIdeas();
     else if (view === "journal") await renderJournal();
     else if (view === "settings") renderSettings();
     success = true;
@@ -280,6 +282,45 @@ async function renderSector() {
       cell.innerHTML = clean.length >= 2 ? sparkline(clean) : `<span class="muted" style="font-size:11px">${DASH}</span>`;
     });
   }).catch(() => {});
+}
+
+/* -- ideas (master ranking) ------------------------------------------- */
+function roleBadge(role) {
+  const map = { "Leader": "green", "Pure Play": "red", "Picks & Shovels": "amber", "Toll Booth": "green", "Arms Dealer": "amber", "Second Derivative": "gray" };
+  return `<span class="pill ${map[role] || "gray"}">${role}</span>`;
+}
+function stagePill(st) {
+  const map = { "Early": "green", "Mid-Run": "amber", "Extended": "red", "Cooling": "red", "Neutral": "gray" };
+  return `<span class="pill ${map[st] || "gray"}">${st || DASH}</span>`;
+}
+async function renderIdeas() {
+  const data = await api("/api/ideas").catch(() => ({ sectors: [], _failed: true }));
+  const sectors = data.sectors || [];
+  const totalIdeas = sectors.reduce((a, s) => a + ((s.ideas && s.ideas.length) || 0), 0);
+  const top = sectors[0];
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Hot sectors</div><div class="v">${sectors.length}</div><div class="sub">scanned for ideas</div></div>
+      <div class="stat-card"><div class="k">Ideas surfaced</div><div class="v">${totalIdeas}</div><div class="sub">across all roles</div></div>
+      <div class="stat-card"><div class="k">Hottest</div><div class="v pos">${top?.etf || DASH}</div><div class="sub">${top ? top.name + ' · heat ' + fmt(top.heat, 0) : ''}</div></div></div>`;
+  if (!sectors.length) {
+    $("#content").innerHTML = stats + (data._failed ? errorState('Ideas engine did not respond.') : '<div class="empty">No ideas right now.</div>');
+    return;
+  }
+  const blocks = sectors.map(s => {
+    const rows = (s.ideas || []).map(it => `<tr>
+      <td class="sym" data-chart="${it.ticker}">${it.ticker}${it.catchup ? ' <span class="pill green" style="font-size:9.5px;padding:1px 6px">Catch-up</span>' : ''}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(it.price)}</div></td>
+      <td>${roleBadge(it.role)}</td>
+      <td>${fwBar(it.finalScore)}</td>
+      <td>${stagePill(it.runStage)}</td>
+      <td class="num ${sign(it.roc4w)}">${fmt(it.roc4w)}%</td>
+      <td class="num ${sign(it.rs4w)}">${fmt(it.rs4w)}</td>
+      <td>${sparkline(it.sparkline)}</td></tr>`).join("");
+    return `<div class="card" style="margin-bottom:18px"><div class="card-pad section-head" style="margin:0;padding-bottom:0;">
+        <h2><span class="sym" data-chart="${s.etf}">${s.etf}</span> ${MID} ${s.name}</h2><span class="hint">#${s.rank} hottest ${MID} heat ${fmt(s.heat, 0)}</span></div>
+      <table><thead><tr><th>Ticker</th><th>Role</th><th>Score</th><th>Stage</th><th class="num">4w %</th><th class="num">vs SPY</th><th>Trend</th></tr></thead>
+      <tbody>${rows || emptyRow(7)}</tbody></table></div>`;
+  }).join("");
+  $("#content").innerHTML = `${stats}<p class="muted" style="margin:0 2px 16px">Ideas grouped by the hottest sectors, each tagged by how it plays the theme. Analytical roles, not buy recommendations.</p>${blocks}`;
 }
 
 /* -- settings --------------------------------------------------------- */

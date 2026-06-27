@@ -26,7 +26,7 @@ from . import config
 from .core import db, store, auth
 from .providers import market_data, news
 from .providers.ibkr import IBKRProvider
-from .scanners import intraday, swing, sector, fundamental
+from .scanners import intraday, swing, sector, fundamental, ideas
 from .journal import journal
 
 logging.basicConfig(level=logging.INFO,
@@ -154,6 +154,13 @@ def api_sector():
 def api_sector_history():
     weeks = request.args.get("weeks", default=12, type=int)
     return jsonify(sector.scan_historical(weeks_back=max(4, min(26, weeks))))
+
+
+@app.route("/api/ideas")
+@auth.require_login
+def api_ideas():
+    n = request.args.get("sectors", default=5, type=int)
+    return jsonify(ideas.scan(top_sectors=max(2, min(8, n))))
 
 
 @app.route("/api/fundamental")
