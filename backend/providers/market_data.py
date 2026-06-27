@@ -146,6 +146,11 @@ def get_history(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
         df = stooq.get_history(symbol, period=period, interval=interval)
     if df is None:
         df = pd.DataFrame()
+    # Drop rows with a missing close: a single NaN in a rolling window (e.g. a
+    # data gap) makes pandas' 200-day average NaN, which then reads as
+    # "price > NaN -> False" and wrongly flags a stock as below its 200MA.
+    if not df.empty and "Close" in df.columns:
+        df = df[df["Close"].notna()]
     _cache_put(key, df)
     return df
 
