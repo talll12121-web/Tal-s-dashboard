@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 SCAN_DEADLINE = 26.0
 TOP_SECTORS = 5
-W_HEAT, W_MOMENTUM = 0.40, 0.60
+W_HEAT, W_MOMENTUM, W_TECH = 0.30, 0.40, 0.30
 
 ROLE_ORDER = ["Leader", "Pure Play", "Picks & Shovels", "Toll Booth",
               "Arms Dealer", "Second Derivative"]
@@ -268,6 +268,78 @@ def _momentum(close: pd.Series, volume: pd.Series, spy_4w: float, spy_4w_ago: fl
     }
 
 
+def _technical(df: pd.DataFrame) -> dict | None:
+    """Ported from technical_scanner.py: MA alignment, RSI, MACD, ATR stop, 52w
+    context -> a 0-100 technical score + rating. Computed from the same df."""
+    close = df["Close"].dropna()
+    if len(close) < 210:
+        return None
+    high, low = df["High"].dropna(), df["Low"].dropna()
+    price = float(close.iloc[-1])
+    ma20 = float(close.rolling(20).mean().iloc[-1])
+    ma50 = float(close.rolling(50).mean().iloc[-1])
+    ma200 = float(close.rolling(200).mean().iloc[-1])
+    pct50 = (price / ma50 - 1) * 100
+    alignment = "Bullish" if ma20 > ma50 > ma200 else ("Bearish" if ma20 < ma50 < ma200 else "Mixed")
+
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, float("nan"))
+    rsi_s = 100 - (100 / (1 + rs))
+    if not pd.notna(rsi_s.iloc[-1]):
+        return None
+    rsi = float(rsi_s.iloc[-1])
+    rsi_sig = "Overbought" if rsi > 70 else ("Oversold" if rsi < 30 else "Neutral")
+
+    ef = close.ewm(span=12, adjust=False).mean()
+    es = close.ewm(span=26, adjust=False).mean()
+    macd_l = ef - es
+    sig = macd_l.ewm(span=9, adjust=False).mean()
+    hist = macd_l - sig
+    macd_cross = "Bullish" if macd_l.iloc[-1] > sig.iloc[-1] else ("Bearish" if macd_l.iloc[-1] < sig.iloc[-1] else "Neutral")
+    if len(hist.dropna()) >= 4:
+        hn, hp = hist.iloc[-1], hist.iloc[-4]
+        macd_trend = "Strengthening" if abs(hn) > abs(hp) * 1.1 else ("Weakening" if abs(hn) < abs(hp) * 0.9 else "Flat")
+    else:
+        macd_trend = "Flat"
+
+    tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+    atr = float(tr.rolling(14).mean().iloc[-1])
+    atr_pct = atr / price * 100
+    stop = price - 2 * atr
+    stop_pct = 2 * atr / price * 100
+    high52 = float(close.tail(252).max())
+    pct_high = (price / high52 - 1) * 100
+
+    score = 50.0
+    score += 12 if alignment == "Bullish" else (-12 if alignment == "Bearish" else 0)
+    score += max(-10, min(10, pct50))
+    if 45 <= rsi <= 65:
+        score += 8
+    elif rsi > 75:
+        score -= 10
+    elif rsi < 30:
+        score -= 8
+    if macd_cross == "Bullish":
+        score += 8 + (4 if macd_trend == "Strengthening" else 0)
+    elif macd_cross == "Bearish":
+        score -= 8 + (4 if macd_trend == "Strengthening" else 0)
+    if pct_high >= -5:
+        score += 8
+    elif pct_high <= -30:
+        score -= 8
+    score = round(max(0.0, min(100.0, score)), 1)
+    rating = ("Strong Buy" if score >= 75 else "Buy" if score >= 60 else
+              "Neutral" if score >= 40 else "Sell" if score >= 25 else "Strong Sell")
+    return {
+        "maAlignment": alignment, "rsi": round(rsi, 1), "rsiSignal": rsi_sig,
+        "macdCross": macd_cross, "macdTrend": macd_trend, "atrPct": round(atr_pct, 2),
+        "suggestedStop": round(stop, 2), "stopPct": round(stop_pct, 2),
+        "pctFrom52wHigh": round(pct_high, 2), "techScore": score, "techRating": rating,
+    }
+
+
 def _spy_ref() -> tuple[float, float]:
     spy = md.get_history("SPY", period="1y", interval="1d")
     if spy.empty:
@@ -285,6 +357,9 @@ def _score(ticker: str, spy_4w: float, spy_4w_ago: float) -> dict | None:
     m = _momentum(df["Close"], df.get("Volume", pd.Series(dtype=float)), spy_4w, spy_4w_ago)
     if not m:
         return None
+    t = _technical(df)
+    if t:
+        m.update(t)
     m["ticker"] = ticker
     m["price"] = round(float(df["Close"].iloc[-1]), 2)
     m["sparkline"] = [round(x, 2) for x in df["Close"].tail(30).tolist()]
@@ -351,7 +426,8 @@ def _scan(top_sectors: int = TOP_SECTORS) -> dict:
                 if not sc:
                     continue
                 seen.add(tk)
-                final = min(100.0, heat_score * W_HEAT + sc["momentumScore"] * W_MOMENTUM)
+                tech = sc.get("techScore", 50.0)
+                final = min(100.0, heat_score * W_HEAT + sc["momentumScore"] * W_MOMENTUM + tech * W_TECH)
                 # "Catch-up": quality laggard not yet extended, RS just turning up
                 catchup = bool(sc["rsTurning"] and sc["roc4w"] < 6 and sc["runStage"] in ("Early", "Neutral"))
                 ideas.append({**sc, "role": role, "finalScore": round(final, 1), "catchup": catchup})

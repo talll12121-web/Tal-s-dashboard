@@ -293,6 +293,10 @@ function stagePill(st) {
   const map = { "Early": "green", "Mid-Run": "amber", "Extended": "red", "Cooling": "red", "Neutral": "gray" };
   return `<span class="pill ${map[st] || "gray"}">${st || DASH}</span>`;
 }
+function techPill(r) {
+  const map = { "Strong Buy": "green", "Buy": "green", "Neutral": "gray", "Sell": "red", "Strong Sell": "red" };
+  return r ? `<span class="pill ${map[r] || "gray"}">${r}</span>` : `<span class="pill gray">${DASH}</span>`;
+}
 async function renderIdeas() {
   const data = await api("/api/ideas").catch(() => ({ sectors: [], _failed: true }));
   const sectors = data.sectors || [];
@@ -308,17 +312,19 @@ async function renderIdeas() {
   }
   const blocks = sectors.map(s => {
     const rows = (s.ideas || []).map(it => `<tr>
-      <td class="sym" data-chart="${it.ticker}">${it.ticker}${it.catchup ? ' <span class="pill green" style="font-size:9.5px;padding:1px 6px">Catch-up</span>' : ''}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(it.price)}</div></td>
+      <td class="sym" data-chart="${it.ticker}">${it.ticker}${it.catchup ? ' <span class="pill green" style="font-size:9.5px;padding:1px 6px">Catch-up</span>' : ''}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(it.price)}${it.suggestedStop ? ` ${MID} stop $${fmt(it.suggestedStop)}` : ''}</div></td>
       <td>${roleBadge(it.role)}</td>
       <td>${fwBar(it.finalScore)}</td>
       <td>${stagePill(it.runStage)}</td>
+      <td class="num">${fmt(it.rsi, 0)}</td>
+      <td>${techPill(it.techRating)}</td>
       <td class="num ${sign(it.roc4w)}">${fmt(it.roc4w)}%</td>
       <td class="num ${sign(it.rs4w)}">${fmt(it.rs4w)}</td>
       <td>${sparkline(it.sparkline)}</td></tr>`).join("");
     return `<div class="card" style="margin-bottom:18px"><div class="card-pad section-head" style="margin:0;padding-bottom:0;">
         <h2><span class="sym" data-chart="${s.etf}">${s.etf}</span> ${MID} ${s.name}</h2><span class="hint">#${s.rank} hottest ${MID} heat ${fmt(s.heat, 0)}</span></div>
-      <table><thead><tr><th>Ticker</th><th>Role</th><th>Score</th><th>Stage</th><th class="num">4w %</th><th class="num">vs SPY</th><th>Trend</th></tr></thead>
-      <tbody>${rows || emptyRow(7)}</tbody></table></div>`;
+      <table><thead><tr><th>Ticker</th><th>Role</th><th>Score</th><th>Stage</th><th class="num">RSI</th><th>Tech</th><th class="num">4w %</th><th class="num">vs SPY</th><th>Trend</th></tr></thead>
+      <tbody>${rows || emptyRow(9)}</tbody></table></div>`;
   }).join("");
   $("#content").innerHTML = `${stats}<p class="muted" style="margin:0 2px 16px">Ideas grouped by the hottest sectors, each tagged by how it plays the theme. Analytical roles, not buy recommendations.</p>${blocks}`;
 }
