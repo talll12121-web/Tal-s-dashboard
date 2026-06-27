@@ -23,6 +23,7 @@ import asyncio
 import threading
 import logging
 import math
+import time
 from datetime import datetime
 
 from .. import config
@@ -63,6 +64,9 @@ class IBKRProvider:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self.connected = False
+        # True = we want to be connected (auto-reconnect). Toggled by the
+        # Settings "Connect"/"Disconnect" buttons or IB_ENABLED at boot.
+        self._want_connect = config.IB_ENABLED
         self.symbols: list[str] = []
 
         # caches (read by Flask thread)
@@ -86,13 +90,50 @@ class IBKRProvider:
         self.symbols = [s.upper() for s in symbols]
 
     def start(self):
-        if not config.IB_ENABLED:
+        if not (config.IB_ENABLED or self._want_connect):
             logger.info("IBKR disabled via config (IB_ENABLED=false).")
             return
         if self._thread and self._thread.is_alive():
             return
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
+
+    def connect(self, timeout: float = 7.0) -> bool:
+        """On-demand connect - used by the Settings 'Connect' button when the app
+        runs on a PC with IB Gateway/TWS. On the cloud instance this just fails
+        gracefully (nothing to reach), so the UI tells the user to run the bridge."""
+        self._want_connect = True
+        config.IB_ENABLED = True
+        if not (self._thread and self._thread.is_alive()):
+            self.start()
+        elif self._loop is not None and self._ib is not None and not self.connected:
+            try:
+                asyncio.run_coroutine_threadsafe(self._connect(), self._loop).result(timeout=timeout)
+            except Exception as e:
+                logger.info("on-demand connect failed: %s", e)
+        deadline = time.time() + timeout
+        while time.time() < deadline and not self.connected:
+            time.sleep(0.2)
+        return self.connected
+
+    def disconnect(self):
+        """Stop auto-reconnect and drop the IBKR socket."""
+        self._want_connect = False
+        config.IB_ENABLED = False
+        self.connected = False
+        if self._loop is not None and self._ib is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._do_disconnect(), self._loop)
+            except Exception:
+                pass
+
+    async def _do_disconnect(self):
+        try:
+            if self._ib and self._ib.isConnected():
+                self._ib.disconnect()
+        except Exception:
+            pass
+        self.connected = False
 
     def positions(self) -> list[dict]:
         """Live account positions with unrealised P&L (sync wrapper)."""
@@ -174,9 +215,12 @@ class IBKRProvider:
         while True:
             await asyncio.sleep(30)
             try:
-                if not self._ib.isConnected():
+                if self._want_connect and not self._ib.isConnected():
                     self.connected = False
                     await self._connect()
+                elif not self._want_connect and self._ib.isConnected():
+                    self._ib.disconnect()
+                    self.connected = False
             except Exception:
                 self.connected = False
 

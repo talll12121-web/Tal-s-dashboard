@@ -370,23 +370,56 @@ function renderSettings() {
       <div class="card setting-card">
         <div class="card-pad">
           <h2 class="set-h">Connections</h2>
-          <div class="setting-row"><div><div class="set-label">Interactive Brokers</div><div class="set-desc" id="ibkr-set-desc">Checking…</div></div>
-            <span id="ibkr-set-pill" class="pill gray">…</span></div>
-          <div class="set-desc" style="margin-top:6px">In the cloud, live IBKR data is pushed up by the desktop bridge. Run the bridge on your trading PC to stream quotes, indicators and positions here.</div>
+          <div class="setting-row">
+            <div><div class="set-label">Interactive Brokers</div><div class="set-desc" id="ibkr-desc">Checking…</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span id="ibkr-pill" class="pill gray">…</span>
+              <button id="ibkr-connect" class="btn soft" style="display:none">Connect</button>
+              <button id="ibkr-disconnect" class="btn soft" style="display:none">Disconnect</button>
+            </div>
+          </div>
+          <div class="set-desc" id="ibkr-help" style="margin-top:8px;line-height:1.65"></div>
         </div>
       </div>
     </div>`;
-  // wire controls
+  // wire appearance controls
   $("#seg-theme").addEventListener("click", e => { const v = e.target.dataset.theme; if (v) { applyTheme(v); renderSettings(); } });
   $("#seg-fs").addEventListener("click", e => { const v = e.target.dataset.fs; if (v) { applyFontSize(v); renderSettings(); } });
   $("#swatches").addEventListener("click", e => { const v = e.target.dataset.accent; if (v) { applyAccent(v); renderSettings(); } });
-  // IBKR status
-  api("/api/status").then(s => {
-    const pill = $("#ibkr-set-pill"), desc = $("#ibkr-set-desc");
+  // IBKR connection
+  async function refreshIbkr() {
+    const pill = $("#ibkr-pill"), desc = $("#ibkr-desc"), help = $("#ibkr-help"),
+          cBtn = $("#ibkr-connect"), dBtn = $("#ibkr-disconnect");
     if (!pill) return;
-    if (s.ibkrConnected) { pill.className = "pill green"; pill.textContent = "Connected"; desc.textContent = `Live on port ${s.ibkrPort}`; }
-    else { pill.className = "pill gray"; pill.textContent = "Offline"; desc.textContent = "No live IBKR feed — bridge not connected"; }
-  }).catch(() => {});
+    let s; try { s = await api("/api/ibkr/status"); } catch (e) { return; }
+    const last = s.lastData ? new Date(s.lastData).toLocaleTimeString() : null;
+    if (s.connected) {
+      pill.className = "pill green";
+      pill.textContent = s.mode === "local" ? "Connected" : "Live (bridge)";
+      desc.textContent = (s.mode === "local" ? `Direct to IB Gateway on port ${s.port}` : "Streaming from your desktop bridge") + (last ? ` ${MID} last data ${last}` : "");
+      cBtn.style.display = "none";
+      dBtn.style.display = s.mode === "local" ? "inline-block" : "none";
+      help.innerHTML = "";
+    } else {
+      pill.className = "pill gray"; pill.textContent = "Offline";
+      desc.textContent = "No live IBKR feed";
+      cBtn.style.display = "inline-block"; dBtn.style.display = "none";
+      help.innerHTML = `IB Gateway runs on your PC, so live data needs one of these:<br>&bull; <strong>Running this app on your trading PC?</strong> Open IB Gateway &amp; log in, then click <strong>Connect</strong> (port ${s.port} ${MID} 4001 live / 4002 paper).<br>&bull; <strong>On the shared cloud site?</strong> The cloud can't reach your Gateway ${MID} run <code>bridge\\run_bridge.bat</code> on your PC to stream data up.`;
+    }
+  }
+  const _ic = $("#ibkr-connect"), _id = $("#ibkr-disconnect");
+  if (_ic) _ic.addEventListener("click", async () => {
+    _ic.textContent = "Connecting…"; _ic.disabled = true;
+    const s = await api("/api/ibkr/connect", { method: "POST", timeout: 20000 }).catch(() => ({}));
+    _ic.textContent = "Connect"; _ic.disabled = false;
+    if (!s.connected) toast("No local IB Gateway found — see the note below");
+    refreshIbkr();
+  });
+  if (_id) _id.addEventListener("click", async () => {
+    await api("/api/ibkr/disconnect", { method: "POST" }).catch(() => {});
+    refreshIbkr();
+  });
+  refreshIbkr();
 }
 
 async function renderJournal() {

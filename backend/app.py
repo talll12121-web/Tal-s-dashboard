@@ -95,11 +95,47 @@ def static_files(path):
 @auth.require_login
 def status():
     return jsonify({
-        "ibkrConnected": store.live_connected(),
+        "ibkrConnected": IBKR.is_connected() or store.live_connected(),
         "ibkrPort": config.IB_PORT,
         "watchlists": store.get_watchlists(),
         "loginRequired": auth.LOGIN_REQUIRED,
     })
+
+
+def _ibkr_status() -> dict:
+    local = IBKR.is_connected()
+    bridge = store.live_connected()
+    _, ts = store.kv_get("live_heartbeat")
+    return {
+        "connected": local or bridge,
+        "mode": "local" if local else ("bridge" if bridge else "offline"),
+        "port": config.IB_PORT,
+        "lastData": ts,
+    }
+
+
+@app.route("/api/ibkr/status")
+@auth.require_login
+def api_ibkr_status():
+    return jsonify(_ibkr_status())
+
+
+@app.route("/api/ibkr/connect", methods=["POST"])
+@auth.require_login
+def api_ibkr_connect():
+    """On-demand connect to a LOCAL IB Gateway/TWS (works only when the app runs
+    on the same PC as the gateway). On the cloud instance it fails gracefully."""
+    ok = IBKR.connect()
+    if ok:
+        IBKR.set_watchlist(store.all_symbols())
+    return jsonify(_ibkr_status())
+
+
+@app.route("/api/ibkr/disconnect", methods=["POST"])
+@auth.require_login
+def api_ibkr_disconnect():
+    IBKR.disconnect()
+    return jsonify(_ibkr_status())
 
 
 # -- watchlists ---------------------------------------------------------
