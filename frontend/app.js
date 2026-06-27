@@ -312,7 +312,7 @@ async function renderIdeas() {
   }
   const blocks = sectors.map(s => {
     const rows = (s.ideas || []).map(it => `<tr>
-      <td class="sym" data-chart="${it.ticker}">${it.ticker}${it.catchup ? ' <span class="pill green" style="font-size:9.5px;padding:1px 6px">Catch-up</span>' : ''}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(it.price)}${it.suggestedStop ? ` ${MID} stop $${fmt(it.suggestedStop)}` : ''}</div></td>
+      <td class="sym" data-chart="${it.ticker}">${it.ticker}${it.catchup ? ' <span class="pill green" style="font-size:9.5px;padding:1px 6px">Catch-up</span>' : ''}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(it.price)}${it.suggestedStop ? ` ${MID} stop $${fmt(it.suggestedStop)}` : ''}<span data-qual="${it.ticker}"></span></div></td>
       <td>${roleBadge(it.role)}</td>
       <td>${fwBar(it.finalScore)}</td>
       <td>${stagePill(it.runStage)}</td>
@@ -327,6 +327,18 @@ async function renderIdeas() {
       <tbody>${rows || emptyRow(9)}</tbody></table></div>`;
   }).join("");
   $("#content").innerHTML = `${stats}<p class="muted" style="margin:0 2px 16px">Ideas grouped by the hottest sectors, each tagged by how it plays the theme. Analytical roles, not buy recommendations.</p>${blocks}`;
+  // lazy fundamental quality (5-framework composite) for the listed tickers
+  const tks = [...new Set(sectors.flatMap(s => (s.ideas || []).map(i => i.ticker)))];
+  if (tks.length) api("/api/ideas/quality?tickers=" + encodeURIComponent(tks.join(","))).then(q => {
+    if (currentView !== "ideas") return;
+    Object.entries(q || {}).forEach(([tk, v]) => {
+      document.querySelectorAll(`[data-qual="${tk}"]`).forEach(el => {
+        if (v.quality == null) { el.textContent = ""; return; }
+        const c = v.quality >= 60 ? "pos" : v.quality < 40 ? "neg" : "";
+        el.innerHTML = ` ${MID} <span class="${c}" title="Fundamental quality (0-100)">Q ${Math.round(v.quality)}${v.partial ? "*" : ""}</span>`;
+      });
+    });
+  }).catch(() => {});
 }
 
 /* -- settings --------------------------------------------------------- */

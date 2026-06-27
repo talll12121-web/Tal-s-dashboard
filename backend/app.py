@@ -200,6 +200,17 @@ def api_ideas():
     return jsonify(ideas.scan(top_sectors=max(2, min(8, n))))
 
 
+@app.route("/api/ideas/quality")
+@auth.require_login
+def api_ideas_quality():
+    """Lazy 5-framework fundamental quality for a set of idea tickers (cached)."""
+    raw = request.args.get("tickers", "")
+    tickers = [t.strip().upper() for t in raw.split(",") if t.strip()][:40]
+    rows = fundamental.scan(tickers)
+    out = {r["symbol"]: {"quality": r.get("compositeScore"), "partial": r.get("partial")} for r in rows}
+    return jsonify(out)
+
+
 @app.route("/api/digest")
 def api_digest():
     """Unauthenticated read-only daily summary for the scheduled digest job.
