@@ -117,7 +117,13 @@
 
   /* ── render the three panes ───────────────────────────────────── */
   function render() {
-    if (!window.LightweightCharts) return;
+    if (!window.LightweightCharts) {
+      const pe = document.getElementById("ch-price");
+      if (pe) pe.innerHTML = '<div class="ch-empty">Chart library didn\'t load — check your connection and reopen.</div>';
+      const re = document.getElementById("ch-rsi"), me = document.getElementById("ch-macd");
+      if (re) re.innerHTML = ""; if (me) me.innerHTML = "";
+      return;
+    }
     syncTf();
     destroyCharts();
     const C = colors();
