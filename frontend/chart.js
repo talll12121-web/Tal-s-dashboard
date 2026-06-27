@@ -220,6 +220,8 @@
     if (!content) return;
     content.addEventListener("click", e => {
       if (e.target.closest(".rm")) return;               // ✕ remove handled by app.js
+      const dc = e.target.closest("[data-chart]");       // explicit symbol (e.g. sector ETFs)
+      if (dc && dc.dataset.chart) { window.openChart(dc.dataset.chart); return; }
       const cell = e.target.closest("td.sym, .sym");
       if (!cell) return;
       const m = cell.textContent.trim().match(/^[A-Z][A-Z.\-]*/);

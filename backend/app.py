@@ -149,6 +149,13 @@ def api_sector():
     return jsonify(sector.scan())
 
 
+@app.route("/api/sector/history")
+@auth.require_login
+def api_sector_history():
+    weeks = request.args.get("weeks", default=12, type=int)
+    return jsonify(sector.scan_historical(weeks_back=max(4, min(26, weeks))))
+
+
 @app.route("/api/fundamental")
 @auth.require_login
 def api_fundamental():

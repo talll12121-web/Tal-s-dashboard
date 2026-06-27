@@ -233,25 +233,53 @@ async function renderLongterm() {
       <tbody>${fbody || emptyRow(9)}</tbody></table></div>`;
 }
 
+function heatBg(h) {
+  if (h == null) return "var(--surface-2)";
+  const hue = Math.max(0, Math.min(138, (h / 100) * 138)); // 0 red → 138 green
+  return `linear-gradient(135deg, hsl(${hue} 60% 30%), hsl(${hue} 55% 36%))`;
+}
+function chk(v) { return v ? `<span class="pill green">&#10003;</span>` : `<span class="pill gray">${DASH}</span>`; }
+
 async function renderSector() {
   const sectorData = await api("/api/sector").catch(() => ({ sectors: [], _failed: true }));
   const sectors = sectorData.sectors || [];
-  const sorted = [...sectors].sort((a, b) => (b.ret1m ?? -99) - (a.ret1m ?? -99));
-  const leader = sorted[0], laggard = sorted[sorted.length - 1];
+  const leader = sectors[0], laggard = sectors[sectors.length - 1];
+  const hot = sectors.filter(s => (s.heat ?? 0) >= 60).length;
   const stats = `<div class="stat-row">
-      <div class="stat-card"><div class="k">Benchmark (SPY)</div><div class="v ${sign(sectorData.benchmark1m)}">${fmt(sectorData.benchmark1m)}%</div><div class="sub">1-month</div></div>
-      <div class="stat-card"><div class="k">Leading sector</div><div class="v pos">${leader?.etf || DASH}</div><div class="sub">${leader ? leader.sector : ''}</div></div>
-      <div class="stat-card"><div class="k">Lagging sector</div><div class="v neg">${laggard?.etf || DASH}</div><div class="sub">${laggard ? laggard.sector : ''}</div></div></div>`;
-  const heat = sectors.map(s => {
-    const v = s.ret1m ?? 0; const t = Math.max(-8, Math.min(8, v)) / 8;
-    const bg = v >= 0 ? `linear-gradient(135deg, hsl(155 70% ${30 - t * 8}%), hsl(155 65% ${36 - t * 8}%))`
-                      : `linear-gradient(135deg, hsl(353 70% ${40 + t * 8}%), hsl(353 65% ${34 + t * 8}%))`;
-    return `<div class="heat-cell" style="background:${bg}"><div class="hs">${s.sector}</div><div class="he">${s.etf} ${MID} #${s.rank}</div>
-      <div class="hv">${v >= 0 ? '+' : ''}${fmt(v)}%</div><div class="hsub">1W ${fmt(s.ret1w)}% ${MID} 3M ${fmt(s.ret3m)}%</div></div>`;
-  }).join("");
+      <div class="stat-card"><div class="k">SPY benchmark</div><div class="v ${sign(sectorData.benchmark1m)}">${fmt(sectorData.benchmark1m)}%</div><div class="sub">1M ${MID} YTD ${fmt(sectorData.benchmarkYtd)}%</div></div>
+      <div class="stat-card"><div class="k">Hottest</div><div class="v pos">${leader?.etf || DASH}</div><div class="sub">${leader ? leader.sector + ' · heat ' + fmt(leader.heat, 0) : ''}</div></div>
+      <div class="stat-card"><div class="k">Coldest</div><div class="v neg">${laggard?.etf || DASH}</div><div class="sub">${laggard ? laggard.sector + ' · heat ' + fmt(laggard.heat, 0) : ''}</div></div>
+      <div class="stat-card"><div class="k">Running hot</div><div class="v">${hot}</div><div class="sub">heat ${GE} 60 of ${sectors.length}</div></div></div>`;
+  const heat = sectors.slice(0, 12).map(s => `<div class="heat-cell sym" data-chart="${s.etf}" style="background:${heatBg(s.heat)}">
+      <div class="hs">${s.sector}</div><div class="he">${s.etf} ${MID} #${s.rank}</div>
+      <div class="hv">${fmt(s.heat, 0)}</div><div class="hsub">1M ${s.ret1m >= 0 ? '+' : ''}${fmt(s.ret1m)}% ${MID} vs SPY ${fmt(s.rs3m)}</div></div>`).join("");
+  const body = sectors.map(s => `<tr>
+      <td class="sym" data-chart="${s.etf}">${s.etf}<div style="font-size:11px;color:var(--muted);font-weight:400">${s.sector}</div></td>
+      <td>${fwBar(s.heat)}</td>
+      <td class="num ${sign(s.ret1m)}">${fmt(s.ret1m)}%</td>
+      <td class="num ${sign(s.ret3m)}">${fmt(s.ret3m)}%</td>
+      <td class="num ${sign(s.ret6m)}">${fmt(s.ret6m)}%</td>
+      <td class="num ${sign(s.rs3m)}">${fmt(s.rs3m)}</td>
+      <td>${chk(s.above50ma)}</td><td>${chk(s.above200ma)}</td>
+      <td class="num">${fmt(s.volRatio)}</td>
+      <td data-hist="${s.etf}"><span class="muted" style="font-size:11px">…</span></td></tr>`).join("");
   $("#content").innerHTML = `${stats}
-    <div class="section-head"><h2>Sector heat ${MID} 1-month momentum</h2><span class="hint">green = leading SPY ${MID} red = lagging</span></div>
-    <div class="heat-grid">${heat || (sectorData._failed ? errorState('Sector data source did not respond.') : '<div class="empty">No sector data</div>')}</div>`;
+    <div class="section-head"><h2>Sector heat ${MID} composite momentum</h2><span class="hint">35 sector + thematic ETFs ${MID} hotter = stronger multi-timeframe momentum</span></div>
+    <div class="heat-grid" style="margin-bottom:24px">${heat || (sectorData._failed ? errorState('Sector data source did not respond.') : '<div class="empty">No sector data</div>')}</div>
+    <div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Rotation table</h2><span class="hint">heat ${MID} returns ${MID} relative strength ${MID} 12-week heat trend</span></div>
+      <table><thead><tr><th>ETF</th><th>Heat</th><th class="num">1M</th><th class="num">3M</th><th class="num">6M</th><th class="num">vs SPY</th><th>&gt;50MA</th><th>&gt;200MA</th><th class="num">Vol</th><th>12wk trend</th></tr></thead>
+      <tbody>${body || emptyRow(10)}</tbody></table></div>`;
+  // lazy-load heat history for the rotation sparklines
+  if (sectors.length) api("/api/sector/history").then(h => {
+    if (currentView !== "sector") return;
+    const hist = h.history || {};
+    Object.entries(hist).forEach(([etf, vals]) => {
+      const cell = document.querySelector(`[data-hist="${etf}"]`);
+      if (!cell) return;
+      const clean = (vals || []).filter(v => v != null);
+      cell.innerHTML = clean.length >= 2 ? sparkline(clean) : `<span class="muted" style="font-size:11px">${DASH}</span>`;
+    });
+  }).catch(() => {});
 }
 
 /* -- settings --------------------------------------------------------- */
