@@ -6,6 +6,7 @@ let refreshTimer = null;
 const DASH = "–", UP = "▲", DN = "▼", X = "✕", GE = "≥", MID = "·";
 
 const VIEWS = {
+  overview:  { title: "Overview",  sub: "Your market at a glance", wl: null },
   intraday:  { title: "Intraday",  sub: "Live momentum on your day-trading watchlist", wl: "intraday" },
   swing:     { title: "Swing",     sub: "Multi-day setups scored by trend, pullback & breakout", wl: "swing" },
   longterm:  { title: "Long-term", sub: "5-framework fundamental ranking", wl: "longterm" },
@@ -131,7 +132,8 @@ async function render(background) {
   if (!background) loading();
   let success = false;
   try {
-    if (view === "intraday") await renderIntraday();
+    if (view === "overview") await renderOverview();
+    else if (view === "intraday") await renderIntraday();
     else if (view === "swing") await renderSwing();
     else if (view === "longterm") await renderLongterm();
     else if (view === "sector") await renderSector();
@@ -151,6 +153,49 @@ async function render(background) {
   }
   // Only schedule next refresh if the current one succeeded and we're still on intraday
   if (success && currentView === "intraday") refreshTimer = setTimeout(() => render(true), 15000);
+}
+
+window.goView = function (v) {
+  $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.view === v));
+  switchView(v);
+};
+function marketStatus() {
+  try {
+    const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const mins = et.getHours() * 60 + et.getMinutes();
+    const open = et.getDay() >= 1 && et.getDay() <= 5 && mins >= 570 && mins < 960;
+    return open ? { label: "Market open", cls: "pos" } : { label: "Market closed", cls: "" };
+  } catch (e) { return { label: "", cls: "" }; }
+}
+async function renderOverview() {
+  const [sec, idea] = await Promise.all([
+    api("/api/sector").catch(() => ({ sectors: [] })),
+    api("/api/ideas").catch(() => ({ sectors: [] })),
+  ]);
+  const sectors = sec.sectors || [];
+  const top = sectors.slice(0, 6);
+  const breadth = sectors.filter(s => s.above50ma).length;
+  const mkt = marketStatus();
+  const allIdeas = (idea.sectors || []).flatMap(s => (s.ideas || []).map(i => ({ ...i, sector: s.etf })))
+    .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 6);
+  const pulse = `<div class="stat-row">
+      <div class="stat-card"><div class="k">SPY ${MID} 1 month</div><div class="v ${sign(sec.benchmark1m)}">${fmt(sec.benchmark1m)}%</div><div class="sub ${mkt.cls}">${mkt.label}</div></div>
+      <div class="stat-card"><div class="k">SPY ${MID} YTD</div><div class="v ${sign(sec.benchmarkYtd)}">${fmt(sec.benchmarkYtd)}%</div><div class="sub">year to date</div></div>
+      <div class="stat-card"><div class="k">Sector breadth</div><div class="v">${breadth}/${sectors.length}</div><div class="sub">above 50-day MA</div></div>
+      <div class="stat-card"><div class="k">Hottest sector</div><div class="v pos">${top[0]?.etf || DASH}</div><div class="sub">${top[0] ? top[0].sector : ''}</div></div></div>`;
+  const heat = top.map(s => `<div class="heat-cell sym" data-chart="${s.etf}" style="background:${heatBg(s.heat)}">
+      <div class="hs">${s.sector}</div><div class="he">${s.etf}</div>
+      <div class="hv">${fmt(s.heat, 0)}</div><div class="hsub">1M ${s.ret1m >= 0 ? '+' : ''}${fmt(s.ret1m)}%</div></div>`).join("");
+  const ideaRows = allIdeas.map(it => `<tr>
+      <td class="sym" data-chart="${it.ticker}">${it.ticker}<div style="font-size:11px;color:var(--muted);font-weight:400">${it.sector}</div></td>
+      <td>${roleBadge(it.role)}</td><td>${fwBar(it.finalScore)}</td><td>${stagePill(it.runStage)}</td>
+      <td class="num ${sign(it.roc4w)}">${fmt(it.roc4w)}%</td></tr>`).join("");
+  $("#content").innerHTML = `${pulse}
+    <div class="section-head"><h2>Sector rotation ${MID} hottest now</h2><span class="hint link" onclick="goView('sector')">View all sectors &rarr;</span></div>
+    <div class="heat-grid" style="margin-bottom:26px">${heat || '<div class="empty">No sector data yet</div>'}</div>
+    <div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Top ideas right now</h2><span class="hint link" onclick="goView('ideas')">Open Ideas &rarr;</span></div>
+      <table><thead><tr><th>Ticker</th><th>Role</th><th>Score</th><th>Stage</th><th class="num">4w %</th></tr></thead>
+      <tbody>${ideaRows || emptyRow(5)}</tbody></table></div>`;
 }
 
 async function renderIntraday() {
@@ -665,4 +710,4 @@ initTheme();
 initAppearance();
 pollStatus();
 setInterval(pollStatus, 10000);
-switchView("intraday");
+switchView("overview");
