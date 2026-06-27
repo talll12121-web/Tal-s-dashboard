@@ -22,6 +22,11 @@ import logging
 import math
 import datetime as _dt
 
+try:
+    import numpy as _np
+except Exception:
+    _np = None
+
 from flask import Flask, jsonify, request, send_from_directory, session, redirect
 from flask.json.provider import DefaultJSONProvider
 
@@ -37,8 +42,16 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("dashboard")
 
 def _json_safe(o):
-    """Recursively turn NaN / Infinity into null - those are invalid JSON and
-    break the browser's JSON.parse (e.g. an indicator like sma20 = NaN)."""
+    """Recursively coerce values that aren't valid JSON: NaN/Infinity -> null,
+    and NumPy scalar types -> native Python. Flask's encoder rejects np.bool_ /
+    np.int64 (which 500'd the sector & ideas endpoints, e.g. above50ma)."""
+    if _np is not None:
+        if isinstance(o, _np.bool_):
+            return bool(o)
+        if isinstance(o, _np.integer):
+            return int(o)
+        if isinstance(o, _np.floating):
+            o = float(o)
     if isinstance(o, float):
         return None if (o != o or o == math.inf or o == -math.inf) else o
     if isinstance(o, dict):

@@ -146,7 +146,20 @@ def _analyze_etf(item, spy_ret):
     return h
 
 
+_CACHE: dict = {"t": 0.0, "data": None}
+_CACHE_TTL = 300  # 5 min - Sector tab, Ideas and Overview all hit this
+
+
 def scan() -> dict:
+    now = time.time()
+    if _CACHE["data"] is not None and (now - _CACHE["t"]) < _CACHE_TTL:
+        return _CACHE["data"]
+    data = _scan()
+    _CACHE.update({"t": now, "data": data})
+    return data
+
+
+def _scan() -> dict:
     spy_ret, _ = _spy_returns()
     rows = []
     t0 = time.time()

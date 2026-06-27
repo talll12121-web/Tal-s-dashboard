@@ -36,7 +36,7 @@ const arrow = (n) => n > 0 ? UP : n < 0 ? DN : "";
 
 async function api(path, opts = {}) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), opts.timeout || 30000);
+  const t = setTimeout(() => ctrl.abort(), opts.timeout || 60000);
   try {
     const r = await fetch(API + path, { ...opts, signal: ctrl.signal });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
