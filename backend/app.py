@@ -19,6 +19,7 @@ Run in cloud: gunicorn backend.wsgi:app   (see Procfile)
 
 from __future__ import annotations
 import logging
+import datetime as _dt
 
 from flask import Flask, jsonify, request, send_from_directory, session, redirect
 
@@ -161,6 +162,26 @@ def api_sector_history():
 def api_ideas():
     n = request.args.get("sectors", default=5, type=int)
     return jsonify(ideas.scan(top_sectors=max(2, min(8, n))))
+
+
+@app.route("/api/digest")
+def api_digest():
+    """Unauthenticated read-only daily summary for the scheduled digest job.
+    Exposes only aggregated market analysis (top hot sectors + their ideas) -
+    no account, journal, or position data."""
+    data = ideas.scan(top_sectors=4)
+    lines = []
+    for s in data.get("sectors", []):
+        picks = ", ".join(
+            f"{i['ticker']} ({i['role']}/{i['runStage']}, {i['roc4w']:+.0f}% 4w)"
+            for i in s.get("ideas", [])[:4])
+        lines.append(f"{s['etf']} {s['name']} - heat {s['heat']:.0f} · {picks}")
+    return jsonify({
+        "date": _dt.datetime.now().strftime("%Y-%m-%d"),
+        "benchmark1m": data.get("benchmark1m"),
+        "sectors": data.get("sectors", []),
+        "text": "\n".join(lines),
+    })
 
 
 @app.route("/api/fundamental")
