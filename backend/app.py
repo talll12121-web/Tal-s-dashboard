@@ -27,7 +27,7 @@ from . import config
 from .core import db, store, auth
 from .providers import market_data, news
 from .providers.ibkr import IBKRProvider
-from .scanners import intraday, swing, sector, fundamental, ideas, analyzer
+from .scanners import intraday, swing, sector, fundamental, ideas, analyzer, backtest
 from .journal import journal
 
 logging.basicConfig(level=logging.INFO,
@@ -248,6 +248,12 @@ def api_candles(symbol):
 @auth.require_login
 def api_analyze(symbol):
     return jsonify(analyzer.analyze(symbol))
+
+
+@app.route("/api/backtest/<symbol>")
+@auth.require_login
+def api_backtest(symbol):
+    return jsonify(backtest.backtest(symbol))
 
 
 # -- news ---------------------------------------------------------------

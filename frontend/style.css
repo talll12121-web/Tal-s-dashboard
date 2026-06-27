@@ -274,6 +274,8 @@ tbody td.sym:hover { color: var(--brand); text-decoration: underline; text-under
 .dot.yellow { background: var(--amber); }
 .dot.red { background: var(--red); }
 .dot.na { background: var(--muted); opacity: .45; }
+.bt-rows { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.bt-rows > div { display: flex; justify-content: space-between; align-items: baseline; }
 
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 860px) {

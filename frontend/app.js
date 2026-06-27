@@ -12,6 +12,7 @@ const VIEWS = {
   sector:    { title: "Sector",    sub: "Sector rotation heat — where money is flowing", wl: null },
   ideas:     { title: "Ideas",     sub: "Top trade ideas in the hottest sectors, by role", wl: null },
   analyzer:  { title: "Analyzer",  sub: "5-Floor institutional scorecard for any ticker", wl: null },
+  backtest:  { title: "Backtest",  sub: "How the bullish signal has played out historically", wl: null },
   journal:   { title: "Journal",   sub: "Your IBKR trades, performance & review", wl: null },
   settings:  { title: "Settings",  sub: "Appearance, connections & preferences", wl: null },
 };
@@ -135,6 +136,7 @@ async function render(background) {
     else if (view === "sector") await renderSector();
     else if (view === "ideas") await renderIdeas();
     else if (view === "analyzer") renderAnalyzer();
+    else if (view === "backtest") renderBacktest();
     else if (view === "journal") await renderJournal();
     else if (view === "settings") renderSettings();
     success = true;
@@ -384,6 +386,64 @@ function analyzerCard(d) {
   }).join("");
   return header + `<div class="az-grid">${floors}</div>
     <p class="muted" style="margin-top:14px">Deterministic 5-Floor scorecard from price &amp; volume. F3 (options) needs a live options feed, so it shows N/A on the cloud. Analytical only, not advice.</p>`;
+}
+
+/* -- backtest --------------------------------------------------------- */
+let _backtestSym = "";
+function renderBacktest() {
+  const sym = _backtestSym || "";
+  $("#content").innerHTML = `
+    <div class="analyzer-bar">
+      <input id="bt-input" type="text" placeholder="Enter a ticker (e.g. AAPL)…" value="${sym}" maxlength="8" autocomplete="off">
+      <button id="bt-go" class="btn primary">Backtest</button>
+    </div>
+    <div id="bt-result">${sym ? "" : '<div class="empty"><div class="big">&#128202;</div>Enter a ticker to backtest the bullish signal over 5 years.</div>'}</div>`;
+  const go = async () => {
+    const t = $("#bt-input").value.trim().toUpperCase();
+    if (!t) return;
+    _backtestSym = t;
+    $("#bt-result").innerHTML = `<div class="skeleton"><span class="loader"></span> Backtesting ${t}…</div>`;
+    let d; try { d = await api("/api/backtest/" + encodeURIComponent(t), { timeout: 30000 }); }
+    catch (e) { $("#bt-result").innerHTML = errorState("Couldn't backtest " + t + "."); return; }
+    if (currentView === "backtest") $("#bt-result").innerHTML = backtestCard(d);
+  };
+  $("#bt-go").addEventListener("click", go);
+  $("#bt-input").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  if (sym) go();
+}
+function backtestCard(d) {
+  if (d.error) return `<div class="empty"><div class="big">&#9888;</div>${d.error} for ${d.symbol}.</div>`;
+  const h10 = d.horizons.find(h => h.days === 10) || d.horizons[0] || {};
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Signals fired</div><div class="v">${d.totalSignals}</div><div class="sub">over ${d.years}y</div></div>
+      <div class="stat-card"><div class="k">Win rate (10d)</div><div class="v ${h10.winRate >= 50 ? 'pos' : 'neg'}">${fmt(h10.winRate, 0)}%</div><div class="sub">${h10.signals} samples</div></div>
+      <div class="stat-card"><div class="k">Avg return (10d)</div><div class="v ${sign(h10.avgReturn)}">${fmt(h10.avgReturn)}%</div><div class="sub">per signal</div></div>
+      <div class="stat-card"><div class="k">Edge vs hold</div><div class="v ${sign(h10.edge)}">${h10.edge >= 0 ? '+' : ''}${fmt(h10.edge)}%</div><div class="sub">vs buy &amp; hold 10d</div></div></div>`;
+  const hz = d.horizons.map(h => h.signals ? `<div class="card"><div class="card-pad">
+      <div class="az-floor-head"><h3>${h.days}-day forward</h3><span class="pill ${h.winRate >= 55 ? 'green' : h.winRate >= 45 ? 'gray' : 'red'}">${fmt(h.winRate, 0)}% win</span></div>
+      <div class="bt-rows">
+        <div><span class="muted">Avg return</span> <b class="${sign(h.avgReturn)}">${fmt(h.avgReturn)}%</b></div>
+        <div><span class="muted">Avg win</span> <b class="pos">${fmt(h.avgWin)}%</b></div>
+        <div><span class="muted">Avg loss</span> <b class="neg">${fmt(h.avgLoss)}%</b></div>
+        <div><span class="muted">Edge vs hold</span> <b class="${sign(h.edge)}">${h.edge >= 0 ? '+' : ''}${fmt(h.edge)}%</b></div>
+        <div><span class="muted">Best / worst</span> <b>${fmt(h.best)}% / ${fmt(h.worst)}%</b></div>
+      </div></div></div>` : `<div class="card"><div class="card-pad"><h3>${h.days}-day</h3><div class="muted" style="margin-top:8px">No signals in range</div></div></div>`).join("");
+  let eq = "";
+  if (d.equity && d.equity.length > 1) {
+    const data = d.equity, w = 600, hh = 90, p = 3;
+    const mn = Math.min(...data), mx = Math.max(...data), rng = mx - mn || 1;
+    const pts = data.map((v, i) => `${(p + i / (data.length - 1) * (w - 2 * p)).toFixed(1)},${(hh - p - (v - mn) / rng * (hh - 2 * p)).toFixed(1)}`).join(" ");
+    const col = data[data.length - 1] >= data[0] ? "var(--green)" : "var(--red)";
+    eq = `<div class="card" style="margin-top:16px"><div class="card-pad"><div class="section-head" style="margin:0 0 10px"><h2>Signal equity curve</h2><span class="hint">$100 compounded across every signal (${d.equityHorizon}-day holds) ${MID} ended $${fmt(data[data.length - 1], 0)}</span></div>
+      <svg viewBox="0 0 ${w} ${hh}" preserveAspectRatio="none" style="width:100%;height:90px"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2"/></svg></div></div>`;
+  }
+  const sigRows = (d.signals || []).map(s => `<tr><td>${s.date}</td><td class="num">$${fmt(s.price)}</td><td class="num ${sign(s.fwd)}">${s.fwd == null ? DASH : fmt(s.fwd) + '%'}</td></tr>`).join("");
+  const sigTable = sigRows ? `<div class="card" style="margin-top:16px"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Recent signals</h2><span class="hint">${d.equityHorizon}-day forward outcome</span></div>
+      <table><thead><tr><th>Date</th><th class="num">Price</th><th class="num">Fwd ${d.equityHorizon}d</th></tr></thead><tbody>${sigRows}</tbody></table></div>` : "";
+  return `<div class="az-head"><div><span class="az-sym sym" data-chart="${d.symbol}">${d.symbol}</span> <span class="muted">$${fmt(d.price)}</span></div></div>
+    <p class="muted" style="margin:-6px 0 16px">Signal: <strong>${d.signalDesc}</strong></p>
+    ${stats}<div class="az-grid">${hz}</div>${eq}${sigTable}
+    <p class="muted" style="margin-top:14px">Historical, reconstructed from price only. Overlapping signals aren't de-duplicated and past performance isn't predictive. Analytical only, not advice.</p>`;
 }
 
 /* -- settings --------------------------------------------------------- */
