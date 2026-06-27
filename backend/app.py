@@ -27,7 +27,7 @@ from . import config
 from .core import db, store, auth
 from .providers import market_data, news
 from .providers.ibkr import IBKRProvider
-from .scanners import intraday, swing, sector, fundamental, ideas
+from .scanners import intraday, swing, sector, fundamental, ideas, analyzer
 from .journal import journal
 
 logging.basicConfig(level=logging.INFO,
@@ -242,6 +242,12 @@ def api_fundamental():
 def api_candles(symbol):
     tf = request.args.get("tf", "D")
     return jsonify(market_data.get_candles(symbol, tf))
+
+
+@app.route("/api/analyze/<symbol>")
+@auth.require_login
+def api_analyze(symbol):
+    return jsonify(analyzer.analyze(symbol))
 
 
 # -- news ---------------------------------------------------------------

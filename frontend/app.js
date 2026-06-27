@@ -11,6 +11,7 @@ const VIEWS = {
   longterm:  { title: "Long-term", sub: "5-framework fundamental ranking", wl: "longterm" },
   sector:    { title: "Sector",    sub: "Sector rotation heat — where money is flowing", wl: null },
   ideas:     { title: "Ideas",     sub: "Top trade ideas in the hottest sectors, by role", wl: null },
+  analyzer:  { title: "Analyzer",  sub: "5-Floor institutional scorecard for any ticker", wl: null },
   journal:   { title: "Journal",   sub: "Your IBKR trades, performance & review", wl: null },
   settings:  { title: "Settings",  sub: "Appearance, connections & preferences", wl: null },
 };
@@ -133,6 +134,7 @@ async function render(background) {
     else if (view === "longterm") await renderLongterm();
     else if (view === "sector") await renderSector();
     else if (view === "ideas") await renderIdeas();
+    else if (view === "analyzer") renderAnalyzer();
     else if (view === "journal") await renderJournal();
     else if (view === "settings") renderSettings();
     success = true;
@@ -339,6 +341,49 @@ async function renderIdeas() {
       });
     });
   }).catch(() => {});
+}
+
+/* -- analyzer (5-Floor scorecard) ------------------------------------- */
+let _analyzerSym = "";
+function renderAnalyzer() {
+  const sym = _analyzerSym || "";
+  $("#content").innerHTML = `
+    <div class="analyzer-bar">
+      <input id="az-input" type="text" placeholder="Enter a ticker (e.g. NVDA)…" value="${sym}" maxlength="8" autocomplete="off">
+      <button id="az-go" class="btn primary">Analyze</button>
+    </div>
+    <div id="az-result">${sym ? "" : '<div class="empty"><div class="big">&#128300;</div>Enter a ticker to run the 5-Floor scorecard.</div>'}</div>`;
+  const go = async () => {
+    const t = $("#az-input").value.trim().toUpperCase();
+    if (!t) return;
+    _analyzerSym = t;
+    $("#az-result").innerHTML = `<div class="skeleton"><span class="loader"></span> Analyzing ${t}…</div>`;
+    let d; try { d = await api("/api/analyze/" + encodeURIComponent(t), { timeout: 30000 }); }
+    catch (e) { $("#az-result").innerHTML = errorState("Couldn't analyze " + t + "."); return; }
+    if (currentView === "analyzer") $("#az-result").innerHTML = analyzerCard(d);
+  };
+  $("#az-go").addEventListener("click", go);
+  $("#az-input").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+  if (sym) go();
+}
+function analyzerCard(d) {
+  if (d.error) return `<div class="empty"><div class="big">&#9888;</div>${d.error} for ${d.symbol}.</div>`;
+  const header = `<div class="az-head">
+      <div><span class="az-sym sym" data-chart="${d.symbol}">${d.symbol}</span> <span class="muted">$${fmt(d.price)}</span></div>
+      <div class="az-verdict">
+        <span class="pill ${d.verdictColor}">${d.verdict}</span>
+        <div class="az-comp"><div class="score-bar" style="width:120px"><i style="width:${d.composite || 0}%"></i></div><span class="score-val">${d.composite ?? DASH}</span></div>
+        <span class="muted" style="font-size:12px">${d.greenFloors}/${d.availFloors} floors green</span>
+      </div></div>`;
+  const floors = (d.floors || []).map(f => {
+    const sigs = f.signals.map(s => `<div class="az-sig"><span class="dot ${s.color}"></span><div><div class="az-sig-name">${s.name}</div><div class="az-sig-det">${s.detail}</div></div></div>`).join("");
+    const sc = f.score == null ? `<span class="pill gray">N/A</span>` : `<span class="pill ${f.color}">${f.score}/5</span>`;
+    return `<div class="card az-floor"><div class="card-pad">
+        <div class="az-floor-head"><h3>${f.key} ${MID} ${f.name}</h3>${sc}</div>
+        <div class="az-sigs">${sigs}</div></div></div>`;
+  }).join("");
+  return header + `<div class="az-grid">${floors}</div>
+    <p class="muted" style="margin-top:14px">Deterministic 5-Floor scorecard from price &amp; volume. F3 (options) needs a live options feed, so it shows N/A on the cloud. Analytical only, not advice.</p>`;
 }
 
 /* -- settings --------------------------------------------------------- */
