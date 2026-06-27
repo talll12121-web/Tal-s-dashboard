@@ -277,6 +277,20 @@ tbody td.sym:hover { color: var(--brand); text-decoration: underline; text-under
 .bt-rows { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
 .bt-rows > div { display: flex; justify-content: space-between; align-items: baseline; }
 
+/* -- P&L calendar -- */
+.cal-wrap { display: flex; flex-wrap: wrap; gap: 24px; }
+.cal-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 42px); gap: 4px; }
+.cal-dow { font-size: 10px; color: var(--muted); text-align: center; padding-bottom: 2px; }
+.cal-cell { height: 42px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border-2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.cal-cell.empty { background: transparent; border: none; }
+.cal-cell.up { background: var(--green-soft); border-color: transparent; }
+.cal-cell.down { background: var(--red-soft); border-color: transparent; }
+.cal-cell .cd { font-size: 10px; color: var(--muted); }
+.cal-cell .cv { font-size: 10.5px; font-weight: 700; }
+.cal-cell.up .cv { color: var(--green); }
+.cal-cell.down .cv { color: var(--red); }
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 860px) {
   .app { flex-direction: column; height: auto; min-height: 100vh; }

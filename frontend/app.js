@@ -13,6 +13,7 @@ const VIEWS = {
   ideas:     { title: "Ideas",     sub: "Top trade ideas in the hottest sectors, by role", wl: null },
   analyzer:  { title: "Analyzer",  sub: "5-Floor institutional scorecard for any ticker", wl: null },
   backtest:  { title: "Backtest",  sub: "How the bullish signal has played out historically", wl: null },
+  portfolio: { title: "Portfolio", sub: "Live IBKR positions & unrealized P&L", wl: null },
   journal:   { title: "Journal",   sub: "Your IBKR trades, performance & review", wl: null },
   settings:  { title: "Settings",  sub: "Appearance, connections & preferences", wl: null },
 };
@@ -137,6 +138,7 @@ async function render(background) {
     else if (view === "ideas") await renderIdeas();
     else if (view === "analyzer") renderAnalyzer();
     else if (view === "backtest") renderBacktest();
+    else if (view === "portfolio") await renderPortfolio();
     else if (view === "journal") await renderJournal();
     else if (view === "settings") renderSettings();
     success = true;
@@ -388,6 +390,62 @@ function analyzerCard(d) {
     <p class="muted" style="margin-top:14px">Deterministic 5-Floor scorecard from price &amp; volume. F3 (options) needs a live options feed, so it shows N/A on the cloud. Analytical only, not advice.</p>`;
 }
 
+/* -- portfolio -------------------------------------------------------- */
+async function renderPortfolio() {
+  const pos = await api("/api/positions").catch(() => []);
+  if (!Array.isArray(pos) || !pos.length) {
+    $("#content").innerHTML = `<div class="card"><div class="empty"><div class="big">&#128188;</div>
+      <strong>No live positions</strong>
+      <p style="margin-top:6px;max-width:440px">Connect Interactive Brokers in <strong>Settings</strong> (or run the desktop bridge) to stream your open positions and live P&amp;L here.</p></div></div>`;
+    return;
+  }
+  const totPnl = pos.reduce((a, p) => a + (p.unrealizedPnL || 0), 0);
+  const totVal = pos.reduce((a, p) => a + (Math.abs(p.currentPrice || 0) * Math.abs(p.position || 0)), 0);
+  const cost = pos.reduce((a, p) => a + (Math.abs(p.avgCost || 0) * Math.abs(p.position || 0)), 0);
+  const totPct = cost ? totPnl / cost * 100 : 0;
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Open positions</div><div class="v">${pos.length}</div><div class="sub">live from IBKR</div></div>
+      <div class="stat-card"><div class="k">Unrealized P&amp;L</div><div class="v ${sign(totPnl)}">$${fmt(totPnl)}</div><div class="sub ${sign(totPct)}">${fmt(totPct)}%</div></div>
+      <div class="stat-card"><div class="k">Market value</div><div class="v">$${fmtBig(totVal)}</div><div class="sub">gross exposure</div></div>
+      <div class="stat-card"><div class="k">Winners</div><div class="v pos">${pos.filter(p => (p.unrealizedPnL || 0) > 0).length}</div><div class="sub">of ${pos.length}</div></div></div>`;
+  const body = pos.slice().sort((a, b) => (b.unrealizedPnL || 0) - (a.unrealizedPnL || 0)).map(p => `<tr>
+      <td class="sym" data-chart="${p.symbol}">${p.symbol}</td>
+      <td class="num">${fmt(p.position, 0)}</td>
+      <td class="num">${fmt(p.avgCost)}</td>
+      <td class="num">${fmt(p.currentPrice)}</td>
+      <td class="num ${sign(p.unrealizedPnL)}">$${fmt(p.unrealizedPnL)}</td>
+      <td class="num ${sign(p.unrealizedPct)}">${fmt(p.unrealizedPct)}%</td></tr>`).join("");
+  $("#content").innerHTML = `${stats}<div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Positions</h2><span class="hint">click a symbol for its chart</span></div>
+      <table><thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Unrl P&amp;L</th><th class="num">%</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+/* -- journal P&L calendar --------------------------------------------- */
+function pnlCalendar(trades) {
+  const byDay = {};
+  (trades || []).forEach(t => { const d = (t.exitTime || "").slice(0, 10); if (d && d.length === 10) byDay[d] = (byDay[d] || 0) + (t.pnl || 0); });
+  const days = Object.keys(byDay);
+  if (!days.length) return "";
+  const months = [...new Set(days.map(d => d.slice(0, 7)))].sort().slice(-3);
+  const grids = months.map(m => monthGrid(m, byDay)).join("");
+  return `<div class="card" style="margin-top:18px"><div class="card-pad"><div class="section-head" style="margin:0 0 12px"><h2>P&amp;L calendar</h2><span class="hint">realized P&amp;L by day ${MID} green up, red down</span></div><div class="cal-wrap">${grids}</div></div></div>`;
+}
+function monthGrid(ym, byDay) {
+  const [y, mo] = ym.split("-").map(Number);
+  const first = new Date(y, mo - 1, 1), dim = new Date(y, mo, 0).getDate();
+  const startW = (first.getDay() + 6) % 7;
+  const name = first.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const dow = ["M", "T", "W", "T", "F", "S", "S"].map(x => `<div class="cal-dow">${x}</div>`).join("");
+  let cells = "";
+  for (let i = 0; i < startW; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let d = 1; d <= dim; d++) {
+    const key = `${ym}-${String(d).padStart(2, "0")}`;
+    const v = byDay[key];
+    const cls = v == null ? "" : v >= 0 ? "up" : "down";
+    cells += `<div class="cal-cell ${cls}" title="${key}${v != null ? ': $' + v.toFixed(0) : ''}"><span class="cd">${d}</span>${v != null ? `<span class="cv">${v >= 0 ? '+' : ''}${Math.round(v)}</span>` : ""}</div>`;
+  }
+  return `<div class="cal-month"><div class="cal-title">${name}</div><div class="cal-grid">${dow}${cells}</div></div>`;
+}
+
 /* -- backtest --------------------------------------------------------- */
 let _backtestSym = "";
 function renderBacktest() {
@@ -567,7 +625,7 @@ async function renderJournal() {
     ? `<div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>Closed trades</h2><span class="hint">FIFO-matched round trips</span></div>
          <table><thead><tr><th>Symbol</th><th>Dir</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">P&amp;L</th><th class="num">%</th><th>Closed</th></tr></thead><tbody>${tbody}</tbody></table></div>`
     : `<div class="card"><div class="empty"><div class="big">&#128211;</div><strong>No trades yet</strong><p style="margin-top:6px">Sync from IBKR or import a CSV to populate your journal.</p></div></div>`;
-  $("#content").innerHTML = `${stats}${toolbar}${eq}${main}`;
+  $("#content").innerHTML = `${stats}${toolbar}${eq}${pnlCalendar(j.trades || [])}${main}`;
   $("#sync-ibkr").addEventListener("click", async () => {
     try { const r = await api("/api/journal/sync-ibkr", { method: "POST" }); toast(`Synced ${r.added} new fills`); render(false); }
     catch (e) { toast("IBKR not connected"); }
