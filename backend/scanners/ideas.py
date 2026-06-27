@@ -291,7 +291,20 @@ def _score(ticker: str, spy_4w: float, spy_4w_ago: float) -> dict | None:
     return m
 
 
+_CACHE: dict = {"t": 0.0, "n": None, "data": None}
+_CACHE_TTL = 300  # 5 min — keeps repeat views + the daily digest fast/consistent
+
+
 def scan(top_sectors: int = TOP_SECTORS) -> dict:
+    now = time.time()
+    if _CACHE["data"] is not None and _CACHE["n"] == top_sectors and (now - _CACHE["t"]) < _CACHE_TTL:
+        return _CACHE["data"]
+    result = _scan(top_sectors)
+    _CACHE.update({"t": now, "n": top_sectors, "data": result})
+    return result
+
+
+def _scan(top_sectors: int = TOP_SECTORS) -> dict:
     heat = sector_mod.scan()
     hot = [s for s in heat.get("sectors", []) if s["etf"] in SECTOR_MAP][:top_sectors]
     if not hot:
