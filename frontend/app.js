@@ -12,6 +12,7 @@ const VIEWS = {
   longterm:  { title: "Long-term", sub: "5-framework fundamental ranking", wl: "longterm" },
   sector:    { title: "Sector",    sub: "Sector rotation heat — where money is flowing", wl: null },
   ideas:     { title: "Ideas",     sub: "Top trade ideas in the hottest sectors, by role", wl: null },
+  scanner:   { title: "Scanner",   sub: "Named strategy scans — Qullamaggie, exhaustion short & more", wl: null },
   analyzer:  { title: "Analyzer",  sub: "5-Floor institutional scorecard for any ticker", wl: null },
   backtest:  { title: "Backtest",  sub: "How the bullish signal has played out historically", wl: null },
   portfolio: { title: "Portfolio", sub: "Live IBKR positions & unrealized P&L", wl: null },
@@ -138,6 +139,7 @@ async function render(background) {
     else if (view === "longterm") await renderLongterm();
     else if (view === "sector") await renderSector();
     else if (view === "ideas") await renderIdeas();
+    else if (view === "scanner") await renderScanner();
     else if (view === "analyzer") renderAnalyzer();
     else if (view === "backtest") renderBacktest();
     else if (view === "portfolio") await renderPortfolio();
@@ -547,6 +549,48 @@ function backtestCard(d) {
     <p class="muted" style="margin:-6px 0 16px">Signal: <strong>${d.signalDesc}</strong></p>
     ${stats}<div class="az-grid">${hz}</div>${eq}${sigTable}
     <p class="muted" style="margin-top:14px">Historical, reconstructed from price only. Overlapping signals aren't de-duplicated and past performance isn't predictive. Analytical only, not advice.</p>`;
+}
+
+/* -- scanner (named strategies) --------------------------------------- */
+let _scanStrategy = "qm_breakout";
+let _scanStrategies = null;
+const _scanPctCols = ["adrPct", "roc1m", "roc3m", "roc6m", "distHigh", "distEma20", "gapPct", "tight10", "lastChg"];
+async function renderScanner() {
+  if (!_scanStrategies) { try { _scanStrategies = await api("/api/strategies"); } catch (e) { _scanStrategies = []; } }
+  const tabs = _scanStrategies.map(s => `<button class="seg ${s.key === _scanStrategy ? 'on' : ''}" data-strat="${s.key}">${s.name}</button>`).join("");
+  $("#content").innerHTML = `<div class="seg-group" id="scan-tabs" style="margin-bottom:16px;flex-wrap:wrap">${tabs}</div><div id="scan-result"></div>`;
+  $("#scan-tabs").addEventListener("click", e => { const k = e.target.dataset.strat; if (k) { _scanStrategy = k; runScan(); } });
+  runScan();
+}
+async function runScan() {
+  document.querySelectorAll("#scan-tabs .seg").forEach(b => b.classList.toggle("on", b.dataset.strat === _scanStrategy));
+  const el = $("#scan-result"); if (!el) return;
+  el.innerHTML = `<div class="skeleton"><span class="loader"></span> Scanning the universe…</div>`;
+  let d; try { d = await api("/api/scan/" + _scanStrategy); } catch (e) { el.innerHTML = errorState("Scan didn't respond — try again."); return; }
+  if (currentView === "scanner") el.innerHTML = scanCard(d);
+}
+function scanCard(d) {
+  if (d.error) return `<div class="empty"><div class="big">&#9888;</div>${d.error}</div>`;
+  const side = d.side === "short" ? `<span class="pill red">SHORT</span>` : `<span class="pill green">LONG</span>`;
+  const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="k">Matches</div><div class="v">${d.matches.length}</div><div class="sub">of ${d.scanned} scanned</div></div>
+      <div class="stat-card"><div class="k">Strategy</div><div class="v" style="font-size:17px">${d.name}</div><div class="sub">${side}</div></div>
+      <div class="stat-card"><div class="k">Top score</div><div class="v">${d.matches[0]?.score ?? DASH}</div><div class="sub">${d.matches[0]?.ticker || ''}</div></div></div>`;
+  const cols = d.cols || [];
+  const head = `<th>Ticker</th><th>Score</th>` + cols.map(c => `<th class="num">${c[1]}</th>`).join("");
+  const cell = (m, key) => {
+    const v = m[key];
+    const unit = _scanPctCols.includes(key) ? "%" : (key === "gapVol" ? "x" : "");
+    const cls = (key.startsWith("roc") || key === "lastChg" || key === "distHigh") ? sign(v) : "";
+    return `<td class="num ${cls}">${fmt(v)}${unit}</td>`;
+  };
+  const rows = d.matches.map(m => `<tr>
+      <td class="sym" data-chart="${m.ticker}">${m.ticker}<div style="font-size:11px;color:var(--muted);font-weight:400">$${fmt(m.price)}</div></td>
+      <td>${fwBar(m.score)}</td>${cols.map(c => cell(m, c[0])).join("")}</tr>`).join("");
+  const empty = `<tr><td colspan="${2 + cols.length}"><div class="empty"><div class="big">&#128269;</div>No matches in the current universe (~${d.scanned} liquid names). These setups often live in smaller, more volatile stocks — widen the universe to catch more.</div></td></tr>`;
+  return `${stats}<p class="muted" style="margin:0 2px 16px">${d.desc} ${MID} analytical screen, not a recommendation.</p>
+    <div class="card"><div class="card-pad section-head" style="margin:0;padding-bottom:0;"><h2>${d.name} matches</h2><span class="hint">click a ticker for its chart &amp; 5-Floor read</span></div>
+      <table><thead><tr>${head}</tr></thead><tbody>${rows || empty}</tbody></table></div>`;
 }
 
 /* -- settings --------------------------------------------------------- */
